@@ -4,6 +4,9 @@ using FSH.Framework.Shared.Constants;
 using FSH.Framework.Web.Modules;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
+using FSH.Modules.Proxies.Features.v1.ManualProxies.CreateManualProxy;
+using FSH.Modules.Proxies.Features.v1.ManualProxies.DeleteManualProxy;
+using FSH.Modules.Proxies.Features.v1.ManualProxies.UpdateManualProxy;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
@@ -47,6 +50,14 @@ public sealed class ProxiesModule : IModule
         // make plain IProxySecretProtector resolution ambiguous between the two protectors.
         builder.Services.AddSingleton<IProxySecretProtector>(sp => sp.GetRequiredService<ProviderAccountCredentialProtector>());
 
+        // ManualProxies CRUD handlers (Task 8) need to resolve IProxySecretProtector
+        // unambiguously to ProxyPasswordProtector specifically, distinct from the unkeyed
+        // registration above (which maps to ProviderAccountCredentialProtector). Both keyed
+        // registrations below delegate to the same two Task 5 singletons — they add resolution
+        // paths, they don't replace anything.
+        builder.Services.AddKeyedSingleton<IProxySecretProtector>("provider-account", (sp, _) => sp.GetRequiredService<ProviderAccountCredentialProtector>());
+        builder.Services.AddKeyedSingleton<IProxySecretProtector>("proxy-password", (sp, _) => sp.GetRequiredService<ProxyPasswordProtector>());
+
         builder.Services.AddScoped<IProxyProviderAdapter, ManualAdapter>();
         builder.Services.AddScoped<IProxyProviderAdapterFactory, ProxyProviderAdapterFactory>();
 
@@ -79,5 +90,9 @@ public sealed class ProxiesModule : IModule
         group.MapDeleteProviderAccountEndpoint();
         group.MapGetProviderAccountByIdEndpoint();
         group.MapListProviderAccountsEndpoint();
+
+        group.MapCreateManualProxyEndpoint();
+        group.MapUpdateManualProxyEndpoint();
+        group.MapDeleteManualProxyEndpoint();
     }
 }

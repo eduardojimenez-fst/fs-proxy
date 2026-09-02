@@ -1,9 +1,9 @@
 using FSH.Framework.Core.Domain;
+using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Domain;
 
 public enum ProxyStatus { Active, Disabled, Banned, Testing, Retired }
-public enum ProxyProtocol { Http, Https, Socks5 }
 
 public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
 {
@@ -44,6 +44,16 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
     }
 
     public void SetStatus(ProxyStatus status) => Status = status;
+
+    public void UpdateConnection(string host, int port, ProxyProtocol protocol, string? username, string? protectedPassword)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(host);
+        Host = host.Trim();
+        Port = port;
+        Protocol = protocol;
+        Username = username;
+        ProtectedPassword = protectedPassword;
+    }
 
     public void MarkRenewed()
     {

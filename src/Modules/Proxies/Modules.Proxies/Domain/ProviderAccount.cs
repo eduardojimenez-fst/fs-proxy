@@ -31,6 +31,30 @@ public sealed class ProviderAccount : AggregateRoot<Guid>, IGlobalEntity
         };
     }
 
+    /// <summary>
+    /// Creates a <see cref="ProviderAccount"/> with a caller-supplied, deterministic id instead
+    /// of a fresh <c>Guid.CreateVersion7()</c> value. Used exclusively by
+    /// <c>ProxiesDbInitializer</c> to seed the well-known Manual provider account
+    /// (<see cref="ManualProviderAccount.Id"/>) so every manually-entered proxy has a fixed,
+    /// predictable <c>ProviderAccountId</c> to attach to. <see cref="BaseEntity{TId}.Id"/> has a
+    /// <c>protected</c> setter, so this factory (declared on the entity itself) can assign it
+    /// directly via the object initializer below, the same way <see cref="Create"/> does —
+    /// no reflection required.
+    /// </summary>
+    internal static ProviderAccount CreateWithId(Guid id, string name, ProxyProviderType providerType, string protectedCredentials)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(protectedCredentials);
+        return new ProviderAccount
+        {
+            Id = id,
+            Name = name.Trim(),
+            ProviderType = providerType,
+            ProtectedCredentials = protectedCredentials,
+            IsEnabled = true
+        };
+    }
+
     public void UpdateCredentials(string protectedCredentials)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(protectedCredentials);

@@ -1,4 +1,4 @@
-using FSH.Modules.Proxies.Domain;
+using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Providers;
 

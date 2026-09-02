@@ -1,4 +1,6 @@
 using FSH.Framework.Persistence;
+using FSH.Modules.Proxies.Contracts;
+using FSH.Modules.Proxies.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -16,5 +18,18 @@ public sealed class ProxiesDbInitializer(ProxiesDbContext dbContext, ILogger<Pro
         }
     }
 
-    public Task SeedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public async Task SeedAsync(CancellationToken cancellationToken)
+    {
+        bool exists = await dbContext.ProviderAccounts
+            .AnyAsync(x => x.Id == ManualProviderAccount.Id, cancellationToken).ConfigureAwait(false);
+        if (exists)
+        {
+            return;
+        }
+
+        var manualAccount = ProviderAccount.CreateWithId(ManualProviderAccount.Id, "Manual", ProxyProviderType.Manual, "n/a");
+        dbContext.ProviderAccounts.Add(manualAccount);
+        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        logger.LogInformation("Seeded the well-known Manual provider account.");
+    }
 }
