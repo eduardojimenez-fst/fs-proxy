@@ -4,6 +4,12 @@ using FSH.Framework.Shared.Constants;
 using FSH.Framework.Web.Modules;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
+using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.AssignHealthCheckTargetToTag;
+using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.CreateHealthCheckTarget;
+using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.DeleteHealthCheckTarget;
+using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.ListHealthCheckTargets;
+using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.UnassignHealthCheckTargetFromTag;
+using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.UpdateHealthCheckTarget;
 using FSH.Modules.Proxies.Features.v1.ManualProxies.CreateManualProxy;
 using FSH.Modules.Proxies.Features.v1.ManualProxies.DeleteManualProxy;
 using FSH.Modules.Proxies.Features.v1.ManualProxies.UpdateManualProxy;
@@ -114,5 +120,12 @@ public sealed class ProxiesModule : IModule
         group.MapAssignPolicyToTagEndpoint();
         group.MapUnassignPolicyFromTagEndpoint();
         group.MapListPolicyProfilesEndpoint();
+
+        group.MapCreateHealthCheckTargetEndpoint();
+        group.MapUpdateHealthCheckTargetEndpoint();
+        group.MapDeleteHealthCheckTargetEndpoint();
+        group.MapAssignHealthCheckTargetToTagEndpoint();
+        group.MapUnassignHealthCheckTargetFromTagEndpoint();
+        group.MapListHealthCheckTargetsEndpoint();
     }
 }
