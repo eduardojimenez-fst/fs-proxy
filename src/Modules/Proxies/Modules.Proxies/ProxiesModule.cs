@@ -1,6 +1,8 @@
 using Asp.Versioning;
 using FSH.Framework.Persistence;
+using FSH.Framework.Shared.Constants;
 using FSH.Framework.Web.Modules;
+using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -18,6 +20,8 @@ public sealed class ProxiesModule : IModule
     public void ConfigureServices(IHostApplicationBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
+
+        PermissionConstants.Register(ProxiesPermissions.All);
 
         builder.Services.AddHeroDbContext<ProxiesDbContext>();
         builder.Services.AddScoped<IDbInitializer, ProxiesDbInitializer>();
