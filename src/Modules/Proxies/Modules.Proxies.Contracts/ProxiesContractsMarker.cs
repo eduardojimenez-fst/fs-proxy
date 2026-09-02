@@ -6,11 +6,14 @@ namespace FSH.Modules.Proxies.Contracts;
 /// </summary>
 public static class ProxiesContractsMarker
 {
+    // TEMPORARY — DELETE once this project has a real command/query (Task 2+).
     // Forces a genuine metadata reference to Mediator.Abstractions on this assembly's public
     // API *signature* — the reference must appear in a member signature (not just a method
     // body/initializer), because reference-assembly generation strips method bodies (including
     // static field initializers) but keeps signatures. Without this, the Mediator source
-    // generator can't recognize this assembly as a scannable target before any real
-    // command/query type exists here yet.
+    // generator's MSG0007 check can't recognize this assembly as a scannable target, because
+    // right now this project has no other type that references Mediator on its own. Once a
+    // real ICommand/IQuery lands here, it will supply that reference naturally and this
+    // member becomes dead weight — remove it then.
     public static Mediator.INotification? AnchorNotification => null;
 }
