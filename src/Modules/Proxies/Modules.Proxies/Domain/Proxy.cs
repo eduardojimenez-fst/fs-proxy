@@ -3,8 +3,6 @@ using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Domain;
 
-public enum ProxyStatus { Active, Disabled, Banned, Testing, Retired }
-
 public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
 {
     public Guid ProviderAccountId { get; private set; }
