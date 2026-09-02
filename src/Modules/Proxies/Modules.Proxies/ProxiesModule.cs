@@ -7,6 +7,12 @@ using FSH.Modules.Proxies.Data;
 using FSH.Modules.Proxies.Features.v1.ManualProxies.CreateManualProxy;
 using FSH.Modules.Proxies.Features.v1.ManualProxies.DeleteManualProxy;
 using FSH.Modules.Proxies.Features.v1.ManualProxies.UpdateManualProxy;
+using FSH.Modules.Proxies.Features.v1.Policies.AssignPolicyToTag;
+using FSH.Modules.Proxies.Features.v1.Policies.CreatePolicyProfile;
+using FSH.Modules.Proxies.Features.v1.Policies.DeletePolicyProfile;
+using FSH.Modules.Proxies.Features.v1.Policies.ListPolicyProfiles;
+using FSH.Modules.Proxies.Features.v1.Policies.UnassignPolicyFromTag;
+using FSH.Modules.Proxies.Features.v1.Policies.UpdatePolicyProfile;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
@@ -101,5 +107,12 @@ public sealed class ProxiesModule : IModule
         group.MapCreateTagEndpoint();
         group.MapDeleteTagEndpoint();
         group.MapListTagsEndpoint();
+
+        group.MapCreatePolicyProfileEndpoint();
+        group.MapUpdatePolicyProfileEndpoint();
+        group.MapDeletePolicyProfileEndpoint();
+        group.MapAssignPolicyToTagEndpoint();
+        group.MapUnassignPolicyFromTagEndpoint();
+        group.MapListPolicyProfilesEndpoint();
     }
 }

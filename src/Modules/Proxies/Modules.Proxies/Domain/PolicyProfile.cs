@@ -1,8 +1,7 @@
 using FSH.Framework.Core.Domain;
+using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Domain;
-
-public enum PolicyProfileType { Manual, AutoDisable, AutoDisableAndRenew }
 
 public sealed class PolicyProfile : AggregateRoot<Guid>, IGlobalEntity
 {

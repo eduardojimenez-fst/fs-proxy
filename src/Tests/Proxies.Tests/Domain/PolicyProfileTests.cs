@@ -1,3 +1,4 @@
+using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Domain;
 using Shouldly;
 using Xunit;

@@ -241,6 +241,7 @@ public class EndpointConventionTests
                                name.StartsWith("Change", StringComparison.Ordinal) ||
                                name.StartsWith("Toggle", StringComparison.Ordinal) ||
                                name.StartsWith("Assign", StringComparison.Ordinal) ||
+                               name.StartsWith("Unassign", StringComparison.Ordinal) ||
                                name.StartsWith("Revoke", StringComparison.Ordinal) ||
                                name.StartsWith("Admin", StringComparison.Ordinal) ||
                                name.StartsWith("Upsert", StringComparison.Ordinal) ||
