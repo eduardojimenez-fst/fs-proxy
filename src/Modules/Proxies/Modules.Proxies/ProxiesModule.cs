@@ -4,6 +4,11 @@ using FSH.Framework.Shared.Constants;
 using FSH.Framework.Web.Modules;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.ListProviderAccounts;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
 using FSH.Modules.Proxies.Providers;
 using FSH.Modules.Proxies.Services;
 using Microsoft.AspNetCore.Builder;
@@ -32,6 +37,16 @@ public sealed class ProxiesModule : IModule
         builder.Services.AddSingleton<ProxyPasswordProtector>();
         builder.Services.AddSingleton<IApiKeyHasher, ApiKeyHasher>();
 
+        // ProviderAccount CRUD handlers (Task 7) depend on the IProxySecretProtector interface
+        // for testability rather than the concrete ProviderAccountCredentialProtector type.
+        // Delegate to the singleton above instead of a second AddSingleton<...>() registration so
+        // there is exactly one protector instance in play. This is unkeyed and maps specifically
+        // to ProviderAccountCredentialProtector; a later task introducing ManualProxies handlers
+        // that need ProxyPasswordProtector behind the same interface must use keyed DI
+        // (AddKeyedSingleton) instead of adding a second unkeyed registration here, which would
+        // make plain IProxySecretProtector resolution ambiguous between the two protectors.
+        builder.Services.AddSingleton<IProxySecretProtector>(sp => sp.GetRequiredService<ProviderAccountCredentialProtector>());
+
         builder.Services.AddScoped<IProxyProviderAdapter, ManualAdapter>();
         builder.Services.AddScoped<IProxyProviderAdapterFactory, ProxyProviderAdapterFactory>();
 
@@ -59,6 +74,10 @@ public sealed class ProxiesModule : IModule
             .WithApiVersionSet(versionSet)
             .RequireAuthorization();
 
-        // Endpoint registrations added in later tasks.
+        group.MapCreateProviderAccountEndpoint();
+        group.MapUpdateProviderAccountEndpoint();
+        group.MapDeleteProviderAccountEndpoint();
+        group.MapGetProviderAccountByIdEndpoint();
+        group.MapListProviderAccountsEndpoint();
     }
 }
