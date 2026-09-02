@@ -12,6 +12,9 @@ using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.ListProviderAccounts;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
+using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
+using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
+using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
 using FSH.Modules.Proxies.Providers;
 using FSH.Modules.Proxies.Services;
 using Microsoft.AspNetCore.Builder;
@@ -94,5 +97,9 @@ public sealed class ProxiesModule : IModule
         group.MapCreateManualProxyEndpoint();
         group.MapUpdateManualProxyEndpoint();
         group.MapDeleteManualProxyEndpoint();
+
+        group.MapCreateTagEndpoint();
+        group.MapDeleteTagEndpoint();
+        group.MapListTagsEndpoint();
     }
 }
