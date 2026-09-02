@@ -2,6 +2,7 @@ using Finbuckle.MultiTenant.Abstractions;
 using FSH.Framework.Persistence.Context;
 using FSH.Framework.Shared.Multitenancy;
 using FSH.Framework.Shared.Persistence;
+using FSH.Modules.Proxies.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,14 @@ public sealed class ProxiesDbContext : BaseDbContext
         DbContextOptions<ProxiesDbContext> options,
         IOptions<DatabaseOptions> settings,
         IHostEnvironment environment) : base(multiTenantContextAccessor, options, settings, environment) { }
+
+    public DbSet<ProviderAccount> ProviderAccounts => Set<ProviderAccount>();
+    public DbSet<Proxy> Proxies => Set<Proxy>();
+    public DbSet<Tag> Tags => Set<Tag>();
+    public DbSet<PolicyProfile> PolicyProfiles => Set<PolicyProfile>();
+    public DbSet<HealthCheckTarget> HealthCheckTargets => Set<HealthCheckTarget>();
+    public DbSet<ProxyUsageEvent> ProxyUsageEvents => Set<ProxyUsageEvent>();
+    public DbSet<ApiClient> ApiClients => Set<ApiClient>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
