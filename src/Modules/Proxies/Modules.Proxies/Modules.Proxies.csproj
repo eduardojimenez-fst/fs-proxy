@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>FSH.Modules.Proxies</RootNamespace>
+		<AssemblyName>FSH.Modules.Proxies</AssemblyName>
+		<NoWarn>$(NoWarn);CA1031;CA1812;CA1859;S3267;S1481</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\..\BuildingBlocks\Persistence\Persistence.csproj" />
+		<ProjectReference Include="..\..\..\BuildingBlocks\Web\Web.csproj" />
+		<ProjectReference Include="..\..\..\BuildingBlocks\Jobs\Jobs.csproj" />
+		<ProjectReference Include="..\..\..\BuildingBlocks\Caching\Caching.csproj" />
+		<ProjectReference Include="..\Modules.Proxies.Contracts\Modules.Proxies.Contracts.csproj" />
+		<ProjectReference Include="..\..\Notifications\Modules.Notifications.Contracts\Modules.Notifications.Contracts.csproj" />
+	</ItemGroup>
+
+</Project>
