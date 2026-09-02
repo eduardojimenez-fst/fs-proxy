@@ -4,6 +4,7 @@ using FSH.Framework.Shared.Constants;
 using FSH.Framework.Web.Modules;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
+using FSH.Modules.Proxies.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -25,6 +26,10 @@ public sealed class ProxiesModule : IModule
 
         builder.Services.AddHeroDbContext<ProxiesDbContext>();
         builder.Services.AddScoped<IDbInitializer, ProxiesDbInitializer>();
+
+        builder.Services.AddSingleton<ProviderAccountCredentialProtector>();
+        builder.Services.AddSingleton<ProxyPasswordProtector>();
+        builder.Services.AddSingleton<IApiKeyHasher, ApiKeyHasher>();
 
         builder.Services.AddHealthChecks()
             .AddDbContextCheck<ProxiesDbContext>(name: "db:proxies", failureStatus: HealthStatus.Unhealthy);
