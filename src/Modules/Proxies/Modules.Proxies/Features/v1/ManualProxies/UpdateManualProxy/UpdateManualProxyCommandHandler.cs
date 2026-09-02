@@ -23,7 +23,8 @@ public sealed class UpdateManualProxyCommandHandler(
             ?? throw new NotFoundException($"Manual proxy {command.Id} not found.");
 
         string? protectedPassword = string.IsNullOrWhiteSpace(command.PlaintextPassword)
-            ? null : proxyPasswordProtector.Protect(command.PlaintextPassword);
+            ? proxy.ProtectedPassword
+            : proxyPasswordProtector.Protect(command.PlaintextPassword);
 
         var newTagIds = await CreateManualProxyCommandHandler.ResolveTagIdsAsync(dbContext, command.TagNames, cancellationToken).ConfigureAwait(false);
         foreach (var tagId in proxy.TagAssignments.Select(a => a.TagId).Except(newTagIds).ToList())

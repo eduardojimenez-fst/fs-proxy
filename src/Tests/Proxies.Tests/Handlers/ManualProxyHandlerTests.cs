@@ -47,6 +47,26 @@ public sealed class ManualProxyHandlerTests
     }
 
     [Fact]
+    public async Task Update_Should_KeepExistingPassword_When_PlaintextPasswordNotProvided()
+    {
+        await using var db = CreateDb();
+        var protector = new FakePasswordProtector();
+        var createSut = new CreateManualProxyCommandHandler(db, protector);
+        var id = await createSut.Handle(
+            new CreateManualProxyCommand("10.0.0.8", 3128, ProxyProtocol.Http, "u", "original-pass", ["pais:cl"]),
+            CancellationToken.None);
+        var updateSut = new UpdateManualProxyCommandHandler(db, protector);
+
+        await updateSut.Handle(
+            new UpdateManualProxyCommand(id, "10.0.0.9", 3129, ProxyProtocol.Http, "u", null, ["pais:cl", "funcionalidad:licitaciones"]),
+            CancellationToken.None);
+
+        var stored = await db.Proxies.SingleAsync(x => x.Id == id);
+        stored.Host.ShouldBe("10.0.0.9");
+        stored.ProtectedPassword.ShouldBe(protector.Protect("original-pass"));
+    }
+
+    [Fact]
     public async Task Delete_Should_RemoveProxy()
     {
         await using var db = CreateDb();
