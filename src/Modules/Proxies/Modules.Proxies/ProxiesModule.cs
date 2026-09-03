@@ -27,6 +27,7 @@ using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.ListProviderAccounts;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.SyncProviderAccountNow;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
@@ -36,6 +37,7 @@ using FSH.Modules.Proxies.Providers.BrightData;
 using FSH.Modules.Proxies.Providers.Oxylabs;
 using FSH.Modules.Proxies.Providers.WebShare;
 using FSH.Modules.Proxies.Services;
+using Hangfire;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -96,6 +98,8 @@ public sealed class ProxiesModule : IModule
 
         builder.Services.AddScoped<IProxyProviderAdapterFactory, ProxyProviderAdapterFactory>();
 
+        builder.Services.AddScoped<IProviderAccountSyncService, ProviderAccountSyncService>();
+
         builder.Services.AddHealthChecks()
             .AddDbContextCheck<ProxiesDbContext>(name: "db:proxies", failureStatus: HealthStatus.Unhealthy);
     }
@@ -125,6 +129,7 @@ public sealed class ProxiesModule : IModule
         group.MapDeleteProviderAccountEndpoint();
         group.MapGetProviderAccountByIdEndpoint();
         group.MapListProviderAccountsEndpoint();
+        group.MapSyncProviderAccountNowEndpoint();
 
         group.MapCreateManualProxyEndpoint();
         group.MapUpdateManualProxyEndpoint();
@@ -151,5 +156,17 @@ public sealed class ProxiesModule : IModule
         group.MapAssignHealthCheckTargetToTagEndpoint();
         group.MapUnassignHealthCheckTargetFromTagEndpoint();
         group.MapListHealthCheckTargetsEndpoint();
+
+        // Hourly periodic sync of every enabled provider account — mirrors Files'
+        // PurgeOrphanedFilesJob registration exactly.
+        var jobManager = endpoints.ServiceProvider.GetService<IRecurringJobManager>();
+        if (jobManager is not null)
+        {
+            jobManager.AddOrUpdate<Jobs.ProviderAccountSyncJob>(
+                "proxies-provider-account-sync",
+                j => j.RunAsync(CancellationToken.None),
+                "0 * * * *", // hourly
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+        }
     }
 }
