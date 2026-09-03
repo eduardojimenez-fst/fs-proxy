@@ -57,6 +57,20 @@ public static class ProxiesPermissions
         public const string Delete = $"Permissions.{Resource}.Delete";
     }
 
+    /// <summary>
+    /// Gates the consumer-facing endpoints (<c>POST /proxies/request</c> and
+    /// <c>POST /proxies/{id}/feedback</c>) for callers authenticating with a JWT rather than an
+    /// admin-issued API key. Deliberately NOT <c>IsBasic</c>: <c>request</c> hands back decrypted
+    /// proxy passwords and <c>feedback</c> feeds the auto-disable policy engine, so it must be an
+    /// explicit grant — this app allows anonymous self-registration, and a merely-authenticated
+    /// tenant user must not reach either endpoint.
+    /// </summary>
+    public static class Consumers
+    {
+        public const string Resource = "Proxies.Consumers";
+        public const string Request = $"Permissions.{Resource}.Request";
+    }
+
     public static IReadOnlyList<FshPermission> All { get; } =
     [
         new("View Provider Accounts", ActionConstants.View, ProviderAccounts.Resource, IsBasic: true),
@@ -87,5 +101,7 @@ public static class ProxiesPermissions
         new("View Api Clients", ActionConstants.View, ApiClients.Resource, IsBasic: true),
         new("Create Api Clients", ActionConstants.Create, ApiClients.Resource),
         new("Delete Api Clients", ActionConstants.Delete, ApiClients.Resource),
+
+        new("Request Proxies", "Request", Consumers.Resource, IsBasic: false),
     ];
 }

@@ -113,6 +113,9 @@ export const ProxiesPermissions = Object.freeze({
     Create: "Permissions.Proxies.ApiClients.Create",
     Delete: "Permissions.Proxies.ApiClients.Delete",
   },
+  Consumers: {
+    Request: "Permissions.Proxies.Consumers.Request",
+  },
 } as const);
 
 // ─── Catalog (drives the Role editor) ───────────────────────────────────
@@ -253,6 +256,11 @@ export const PERMISSION_CATALOG: readonly PermissionGroup[] = [
       { name: ProxiesPermissions.ApiClients.View, description: "View proxy API clients", basic: true },
       { name: ProxiesPermissions.ApiClients.Create, description: "Create proxy API clients" },
       { name: ProxiesPermissions.ApiClients.Delete, description: "Delete proxy API clients" },
+
+      {
+        name: ProxiesPermissions.Consumers.Request,
+        description: "Request proxies & report feedback (returns decrypted proxy credentials)",
+      },
     ],
   },
 ];

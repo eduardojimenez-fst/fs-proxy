@@ -28,7 +28,9 @@
 		<ProjectReference Include="..\..\..\BuildingBlocks\Jobs\Jobs.csproj" />
 		<ProjectReference Include="..\..\..\BuildingBlocks\Caching\Caching.csproj" />
 		<ProjectReference Include="..\Modules.Proxies.Contracts\Modules.Proxies.Contracts.csproj" />
-		<ProjectReference Include="..\..\Notifications\Modules.Notifications.Contracts\Modules.Notifications.Contracts.csproj" />
+		<!-- IUserPermissionService, for the JWT leg of the ProxiesConsumerAccess policy. Contracts
+		     project only — never the Identity runtime project. -->
+		<ProjectReference Include="..\..\Identity\Modules.Identity.Contracts\Modules.Identity.Contracts.csproj" />
 	</ItemGroup>
 
 </Project>

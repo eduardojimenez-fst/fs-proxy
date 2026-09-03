@@ -134,11 +134,21 @@ public sealed class ProxiesModule : IModule
             .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationDefaults.SchemeName, _ => { });
 
+        // RequireAuthenticatedUser() alone is NOT sufficient here: the JWT leg would let any
+        // authenticated user (including a zero-permission self-registered tenant user) pull
+        // decrypted proxy credentials from /request and steer the policy engine via /feedback.
+        // ProxiesConsumerAuthorizationHandler keeps the API-key leg as-is (key possession IS the
+        // authorization) and additionally demands ProxiesPermissions.Consumers.Request on the JWT
+        // leg. Scoped, not singleton — IUserPermissionService is registered transient and depends
+        // on scoped Identity services.
+        builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ProxiesConsumerAuthorizationHandler>();
+
         builder.Services.AddAuthorizationBuilder()
             .AddPolicy(ApiKeyAuthenticationDefaults.ConsumerPolicyName, policy =>
                 policy
                     .AddAuthenticationSchemes(ApiKeyAuthenticationDefaults.SchemeName, Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
-                    .RequireAuthenticatedUser());
+                    .RequireAuthenticatedUser()
+                    .AddRequirements(new ProxiesConsumerRequirement()));
     }
 
     public void ConfigureMiddleware(IApplicationBuilder app)
