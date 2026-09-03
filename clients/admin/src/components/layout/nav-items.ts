@@ -1,9 +1,12 @@
 import {
   Activity,
   Building2,
+  Cloud,
   LayoutDashboard,
+  Network,
   Receipt,
   ScrollText,
+  Server,
   Settings,
   ShieldCheck,
   UserCog,
@@ -16,6 +19,7 @@ import {
   BillingPermissions,
   IdentityPermissions,
   MultitenancyPermissions,
+  ProxiesPermissions,
   WebhooksPermissions,
 } from "@/lib/permissions";
 
@@ -84,6 +88,31 @@ export const sections: NavSection[] = [
         label: "Impersonation",
         icon: UserCog,
         perms: [IdentityPermissions.Impersonation.View],
+      },
+    ],
+  },
+  {
+    id: "proxies",
+    caption: "Proxies",
+    icon: Network,
+    items: [
+      {
+        to: "/proxies",
+        label: "Proxies",
+        icon: Network,
+        perms: [ProxiesPermissions.ProviderAccounts.View],
+      },
+      {
+        to: "/proxies/provider-accounts",
+        label: "Provider Accounts",
+        icon: Cloud,
+        perms: [ProxiesPermissions.ProviderAccounts.View],
+      },
+      {
+        to: "/proxies/manual",
+        label: "Manual Proxies",
+        icon: Server,
+        perms: [ProxiesPermissions.ManualProxies.View],
       },
     ],
   },

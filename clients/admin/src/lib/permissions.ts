@@ -77,6 +77,47 @@ export const WebhooksPermissions = Object.freeze({
   },
 } as const);
 
+export const ProxiesPermissions = Object.freeze({
+  ProviderAccounts: {
+    View: "Permissions.Proxies.ProviderAccounts.View",
+    Create: "Permissions.Proxies.ProviderAccounts.Create",
+    Update: "Permissions.Proxies.ProviderAccounts.Update",
+    Delete: "Permissions.Proxies.ProviderAccounts.Delete",
+  },
+  ManualProxies: {
+    View: "Permissions.Proxies.ManualProxies.View",
+    Create: "Permissions.Proxies.ManualProxies.Create",
+    Update: "Permissions.Proxies.ManualProxies.Update",
+    Delete: "Permissions.Proxies.ManualProxies.Delete",
+  },
+  Tags: {
+    View: "Permissions.Proxies.Tags.View",
+    Create: "Permissions.Proxies.Tags.Create",
+    Update: "Permissions.Proxies.Tags.Update",
+    Delete: "Permissions.Proxies.Tags.Delete",
+  },
+  Policies: {
+    View: "Permissions.Proxies.Policies.View",
+    Create: "Permissions.Proxies.Policies.Create",
+    Update: "Permissions.Proxies.Policies.Update",
+    Delete: "Permissions.Proxies.Policies.Delete",
+  },
+  HealthCheckTargets: {
+    View: "Permissions.Proxies.HealthCheckTargets.View",
+    Create: "Permissions.Proxies.HealthCheckTargets.Create",
+    Update: "Permissions.Proxies.HealthCheckTargets.Update",
+    Delete: "Permissions.Proxies.HealthCheckTargets.Delete",
+  },
+  ApiClients: {
+    View: "Permissions.Proxies.ApiClients.View",
+    Create: "Permissions.Proxies.ApiClients.Create",
+    Delete: "Permissions.Proxies.ApiClients.Delete",
+  },
+  Consumers: {
+    Request: "Permissions.Proxies.Consumers.Request",
+  },
+} as const);
+
 // ─── Catalog (drives the Role editor) ───────────────────────────────────
 
 export type PermissionEntry = {
@@ -181,6 +222,45 @@ export const PERMISSION_CATALOG: readonly PermissionGroup[] = [
       { name: WebhooksPermissions.Subscriptions.Create, description: "Create webhook subscriptions" },
       { name: WebhooksPermissions.Subscriptions.Delete, description: "Delete webhook subscriptions" },
       { name: WebhooksPermissions.Subscriptions.Test, description: "Send test webhook deliveries" },
+    ],
+  },
+  {
+    category: "Proxies",
+    blurb: "Manage proxy provider accounts, manually-hosted proxies, tags, policies, and health checks.",
+    entries: [
+      { name: ProxiesPermissions.ProviderAccounts.View, description: "View provider accounts", basic: true },
+      { name: ProxiesPermissions.ProviderAccounts.Create, description: "Create provider accounts" },
+      { name: ProxiesPermissions.ProviderAccounts.Update, description: "Update provider accounts" },
+      { name: ProxiesPermissions.ProviderAccounts.Delete, description: "Delete provider accounts" },
+
+      { name: ProxiesPermissions.ManualProxies.View, description: "View manual proxies", basic: true },
+      { name: ProxiesPermissions.ManualProxies.Create, description: "Create manual proxies" },
+      { name: ProxiesPermissions.ManualProxies.Update, description: "Update manual proxies" },
+      { name: ProxiesPermissions.ManualProxies.Delete, description: "Delete manual proxies" },
+
+      { name: ProxiesPermissions.Tags.View, description: "View proxy tags", basic: true },
+      { name: ProxiesPermissions.Tags.Create, description: "Create proxy tags" },
+      { name: ProxiesPermissions.Tags.Update, description: "Update proxy tags" },
+      { name: ProxiesPermissions.Tags.Delete, description: "Delete proxy tags" },
+
+      { name: ProxiesPermissions.Policies.View, description: "View proxy policy profiles", basic: true },
+      { name: ProxiesPermissions.Policies.Create, description: "Create proxy policy profiles" },
+      { name: ProxiesPermissions.Policies.Update, description: "Update proxy policy profiles" },
+      { name: ProxiesPermissions.Policies.Delete, description: "Delete proxy policy profiles" },
+
+      { name: ProxiesPermissions.HealthCheckTargets.View, description: "View health check targets", basic: true },
+      { name: ProxiesPermissions.HealthCheckTargets.Create, description: "Create health check targets" },
+      { name: ProxiesPermissions.HealthCheckTargets.Update, description: "Update health check targets" },
+      { name: ProxiesPermissions.HealthCheckTargets.Delete, description: "Delete health check targets" },
+
+      { name: ProxiesPermissions.ApiClients.View, description: "View proxy API clients", basic: true },
+      { name: ProxiesPermissions.ApiClients.Create, description: "Create proxy API clients" },
+      { name: ProxiesPermissions.ApiClients.Delete, description: "Delete proxy API clients" },
+
+      {
+        name: ProxiesPermissions.Consumers.Request,
+        description: "Request proxies & report feedback (returns decrypted proxy credentials)",
+      },
     ],
   },
 ];

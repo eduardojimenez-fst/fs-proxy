@@ -241,6 +241,7 @@ public class EndpointConventionTests
                                name.StartsWith("Change", StringComparison.Ordinal) ||
                                name.StartsWith("Toggle", StringComparison.Ordinal) ||
                                name.StartsWith("Assign", StringComparison.Ordinal) ||
+                               name.StartsWith("Unassign", StringComparison.Ordinal) ||
                                name.StartsWith("Revoke", StringComparison.Ordinal) ||
                                name.StartsWith("Admin", StringComparison.Ordinal) ||
                                name.StartsWith("Upsert", StringComparison.Ordinal) ||
@@ -279,7 +280,9 @@ public class EndpointConventionTests
                                name.StartsWith("Pin", StringComparison.Ordinal) ||
                                name.StartsWith("Unpin", StringComparison.Ordinal) ||
                                name.StartsWith("Approve", StringComparison.Ordinal) ||
-                               name.StartsWith("Reject", StringComparison.Ordinal);
+                               name.StartsWith("Reject", StringComparison.Ordinal) ||
+                               name.StartsWith("Sync", StringComparison.Ordinal) ||
+                               name.StartsWith("Report", StringComparison.Ordinal);
 
                 if (!hasVerb)
                 {

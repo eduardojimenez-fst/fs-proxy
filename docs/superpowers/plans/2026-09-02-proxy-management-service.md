@@ -2575,10 +2575,12 @@ using FSH.Modules.Proxies.Domain;
 using FSH.Modules.Proxies.Services;
 using Mediator;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FSH.Modules.Proxies.Features.v1.ManualProxies.CreateManualProxy;
 
-public sealed class CreateManualProxyCommandHandler(ProxiesDbContext dbContext, IProxySecretProtector proxyPasswordProtector)
+public sealed class CreateManualProxyCommandHandler(
+    ProxiesDbContext dbContext, [FromKeyedServices("proxy-password")] IProxySecretProtector proxyPasswordProtector)
     : ICommandHandler<CreateManualProxyCommand, Guid>
 {
     public async ValueTask<Guid> Handle(CreateManualProxyCommand command, CancellationToken cancellationToken)
@@ -2645,10 +2647,12 @@ using FSH.Modules.Proxies.Features.v1.ManualProxies.CreateManualProxy;
 using FSH.Modules.Proxies.Services;
 using Mediator;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace FSH.Modules.Proxies.Features.v1.ManualProxies.UpdateManualProxy;
 
-public sealed class UpdateManualProxyCommandHandler(ProxiesDbContext dbContext, IProxySecretProtector proxyPasswordProtector)
+public sealed class UpdateManualProxyCommandHandler(
+    ProxiesDbContext dbContext, [FromKeyedServices("proxy-password")] IProxySecretProtector proxyPasswordProtector)
     : ICommandHandler<UpdateManualProxyCommand>
 {
     public async ValueTask<Unit> Handle(UpdateManualProxyCommand command, CancellationToken cancellationToken)
@@ -2845,14 +2849,15 @@ group.MapUpdateManualProxyEndpoint();
 group.MapDeleteManualProxyEndpoint();
 ```
 
-The Create/Update handlers above take `IProxySecretProtector` by constructor parameter but must each receive the `ProxyPasswordProtector` concrete instance (not `ProviderAccountCredentialProtector`, which Task 7's handlers use). Register them with keyed DI in `ProxiesModule.ConfigureServices`, replacing the two plain `AddSingleton` calls from Task 5 Step 6:
+The Create/Update handlers above take `IProxySecretProtector` by constructor parameter (via `[FromKeyedServices("proxy-password")]`, already shown in Step 4's handler code) but must each resolve to the `ProxyPasswordProtector` concrete instance specifically — not `ProviderAccountCredentialProtector`, which Task 7's handlers use. **Do not** replace Task 5's plain `AddSingleton<ProviderAccountCredentialProtector>()`/`AddSingleton<ProxyPasswordProtector>()` registrations — Task 7's handlers and Task 16/19/20's services all depend on being able to inject those two concrete types directly (unkeyed), and removing the unkeyed registration would break every one of them. Instead, *add* two keyed registrations that delegate to the same singleton instances, purely so this task's handlers can resolve the shared interface unambiguously:
 
 ```csharp
-builder.Services.AddKeyedSingleton<IProxySecretProtector, ProviderAccountCredentialProtector>("provider-account");
-builder.Services.AddKeyedSingleton<IProxySecretProtector, ProxyPasswordProtector>("proxy-password");
+// add to ProxiesModule.ConfigureServices, alongside (not instead of) Task 5's two AddSingleton calls
+builder.Services.AddKeyedSingleton<IProxySecretProtector>("provider-account", (sp, _) => sp.GetRequiredService<ProviderAccountCredentialProtector>());
+builder.Services.AddKeyedSingleton<IProxySecretProtector>("proxy-password", (sp, _) => sp.GetRequiredService<ProxyPasswordProtector>());
 ```
 
-and change every handler constructor to take `[FromKeyedServices("provider-account")] IProxySecretProtector protector` (Task 7's three handlers) or `[FromKeyedServices("proxy-password")] IProxySecretProtector proxyPasswordProtector` (this task's two handlers) instead of the concrete types shown above — update Task 7's `CreateProviderAccountCommandHandler` and `UpdateProviderAccountCommandHandler` constructors accordingly (`using Microsoft.Extensions.DependencyInjection;` for the attribute).
+No change is needed to Task 7's `CreateProviderAccountCommandHandler`/`UpdateProviderAccountCommandHandler` (they keep taking the concrete `ProviderAccountCredentialProtector` type unchanged) or to Task 16/19/20's services (same).
 
 - [ ] **Step 8: Build and run the full Proxies test suite**
 

@@ -2,6 +2,7 @@ using FSH.Modules.Auditing.Contracts;
 using FSH.Modules.Chat.Contracts;
 using FSH.Modules.Identity.Contracts;
 using FSH.Modules.Multitenancy.Contracts;
+using FSH.Modules.Proxies.Contracts;
 using NetArchTest.Rules;
 using Shouldly;
 using System.Reflection;
@@ -20,7 +21,8 @@ public class ContractsPurityTests
         typeof(AuditingContractsMarker).Assembly,
         typeof(ChatContractsMarker).Assembly,
         typeof(IdentityContractsMarker).Assembly,
-        typeof(MultitenancyContractsMarker).Assembly
+        typeof(MultitenancyContractsMarker).Assembly,
+        typeof(ProxiesContractsMarker).Assembly
     ];
 
     [Fact]

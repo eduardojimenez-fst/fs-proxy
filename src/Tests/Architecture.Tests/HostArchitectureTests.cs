@@ -45,7 +45,10 @@ public class HostArchitectureTests
             "FSH.Modules.Identity.Features",
             "FSH.Modules.Identity.Data",
             "FSH.Modules.Multitenancy.Features",
-            "FSH.Modules.Multitenancy.Data"
+            "FSH.Modules.Multitenancy.Data",
+            "FSH.Modules.Proxies.Features",
+            "FSH.Modules.Proxies.Data",
+            "FSH.Modules.Proxies.Domain"
         };
 
         var hostResult = Types

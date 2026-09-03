@@ -12,6 +12,7 @@ import {
   BillingPermissions,
   IdentityPermissions,
   MultitenancyPermissions,
+  ProxiesPermissions,
   WebhooksPermissions,
 } from "@/lib/permissions";
 
@@ -39,6 +40,15 @@ const InvoicesListPage = lazyNamed(() => import("@/pages/billing/invoices-list")
 const InvoiceDetailPage = lazyNamed(() => import("@/pages/billing/invoice-detail"), "InvoiceDetailPage");
 const TopupsListPage = lazyNamed(() => import("@/pages/billing/topups-list"), "TopupsListPage");
 const AuditsListPage = lazyNamed(() => import("@/pages/audits/list"), "AuditsListPage");
+const ProxiesListPage = lazyNamed(() => import("@/pages/proxies/list"), "ProxiesListPage");
+const ProviderAccountsListPage = lazyNamed(
+  () => import("@/pages/proxies/provider-accounts"),
+  "ProviderAccountsListPage",
+);
+const ManualProxiesListPage = lazyNamed(
+  () => import("@/pages/proxies/manual-proxies"),
+  "ManualProxiesListPage",
+);
 const HealthPage = lazyNamed(() => import("@/pages/health/page"), "HealthPage");
 const ImpersonationListPage = lazyNamed(() => import("@/pages/impersonation/list"), "ImpersonationListPage");
 const WebhooksListPage = lazyNamed(() => import("@/pages/webhooks/list"), "WebhooksListPage");
@@ -193,6 +203,32 @@ export const router = createBrowserRouter([
           {
             path: "audits/:id",
             element: <Navigate to="/audits" replace />,
+          },
+
+          // Proxies — provider accounts / manual proxies / tag-scoped enable-disable.
+          {
+            path: "proxies",
+            element: (
+              <RouteGuard perms={[ProxiesPermissions.ProviderAccounts.View]}>
+                <ProxiesListPage />
+              </RouteGuard>
+            ),
+          },
+          {
+            path: "proxies/provider-accounts",
+            element: (
+              <RouteGuard perms={[ProxiesPermissions.ProviderAccounts.View]}>
+                <ProviderAccountsListPage />
+              </RouteGuard>
+            ),
+          },
+          {
+            path: "proxies/manual",
+            element: (
+              <RouteGuard perms={[ProxiesPermissions.ManualProxies.View]}>
+                <ManualProxiesListPage />
+              </RouteGuard>
+            ),
           },
 
           // Webhooks — list/detail both read subscriptions, which the server
