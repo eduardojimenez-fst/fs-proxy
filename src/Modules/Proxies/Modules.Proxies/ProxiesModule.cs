@@ -5,6 +5,9 @@ using FSH.Framework.Web.HttpResilience;
 using FSH.Framework.Web.Modules;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
+using FSH.Modules.Proxies.Features.v1.ApiClients.CreateApiClient;
+using FSH.Modules.Proxies.Features.v1.ApiClients.DeleteApiClient;
+using FSH.Modules.Proxies.Features.v1.ApiClients.ListApiClients;
 using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.AssignHealthCheckTargetToTag;
 using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.CreateHealthCheckTarget;
 using FSH.Modules.Proxies.Features.v1.HealthCheckTargets.DeleteHealthCheckTarget;
@@ -167,6 +170,10 @@ public sealed class ProxiesModule : IModule
         group.MapAssignHealthCheckTargetToTagEndpoint();
         group.MapUnassignHealthCheckTargetFromTagEndpoint();
         group.MapListHealthCheckTargetsEndpoint();
+
+        group.MapCreateApiClientEndpoint();
+        group.MapDeleteApiClientEndpoint();
+        group.MapListApiClientsEndpoint();
 
         // Hourly periodic sync of every enabled provider account — mirrors Files'
         // PurgeOrphanedFilesJob registration exactly.
