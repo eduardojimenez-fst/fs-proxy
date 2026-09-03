@@ -1,6 +1,7 @@
 using Asp.Versioning;
 using FSH.Framework.Persistence;
 using FSH.Framework.Shared.Constants;
+using FSH.Framework.Web.HttpResilience;
 using FSH.Framework.Web.Modules;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
@@ -31,6 +32,7 @@ using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
 using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
 using FSH.Modules.Proxies.Providers;
+using FSH.Modules.Proxies.Providers.WebShare;
 using FSH.Modules.Proxies.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -77,6 +79,11 @@ public sealed class ProxiesModule : IModule
         builder.Services.AddKeyedSingleton<IProxySecretProtector>("proxy-password", (sp, _) => sp.GetRequiredService<ProxyPasswordProtector>());
 
         builder.Services.AddScoped<IProxyProviderAdapter, ManualAdapter>();
+
+        builder.Services.AddHttpClient("ProxyProvider:WebShare")
+            .AddHeroResilience(builder.Configuration);
+        builder.Services.AddScoped<IProxyProviderAdapter, WebShareAdapter>();
+
         builder.Services.AddScoped<IProxyProviderAdapterFactory, ProxyProviderAdapterFactory>();
 
         builder.Services.AddHealthChecks()

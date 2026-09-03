@@ -5,7 +5,10 @@
 		<AssemblyName>Proxies.Tests</AssemblyName>
 		<IsPackable>false</IsPackable>
 		<IsTestProject>true</IsTestProject>
-		<NoWarn>$(NoWarn);CA1515;CA1861;CA1707</NoWarn>
+		<!-- CA2000 - dispose (test scope): HttpResponseMessage instances built for WebShareAdapterTests'
+		     stub handler live for the duration of the test method and are not worth wrapping in
+		     `using`, matching the same suppression used by Integration.Tests / Integration.Middleware.Tests. -->
+		<NoWarn>$(NoWarn);CA1515;CA1861;CA1707;CA2000</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>

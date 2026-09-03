@@ -3,7 +3,10 @@
 	<PropertyGroup>
 		<RootNamespace>FSH.Modules.Proxies</RootNamespace>
 		<AssemblyName>FSH.Modules.Proxies</AssemblyName>
-		<NoWarn>$(NoWarn);CA1031;CA1812;CA1859;S3267;S1481</NoWarn>
+		<!-- S1075: provider adapters (WebShare, and Oxylabs/BrightData in later tasks) call fixed,
+		     documented vendor API base URLs — these are not user/tenant-supplied and are expected
+		     to be literal constants rather than configuration. -->
+		<NoWarn>$(NoWarn);CA1031;CA1812;CA1859;S3267;S1481;S1075</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
