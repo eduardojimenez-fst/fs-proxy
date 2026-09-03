@@ -32,6 +32,7 @@ using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
 using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
+using FSH.Modules.Proxies.Options;
 using FSH.Modules.Proxies.Providers;
 using FSH.Modules.Proxies.Providers.BrightData;
 using FSH.Modules.Proxies.Providers.Oxylabs;
@@ -102,6 +103,14 @@ public sealed class ProxiesModule : IModule
         builder.Services.AddScoped<IProxyRenewalService, ProxyRenewalService>();
         builder.Services.AddScoped<IPolicyEvaluationService, PolicyEvaluationService>();
 
+        builder.Services.AddOptions<ProxiesOptions>()
+            .BindConfiguration(nameof(ProxiesOptions))
+            .ValidateDataAnnotations()
+            .ValidateOnStart();
+
+        builder.Services.AddScoped<IHealthCheckTargetResolver, HealthCheckTargetResolver>();
+        builder.Services.AddScoped<IProxyPasswordResolver, ProxyPasswordResolver>();
+
         builder.Services.AddHealthChecks()
             .AddDbContextCheck<ProxiesDbContext>(name: "db:proxies", failureStatus: HealthStatus.Unhealthy);
     }
@@ -168,6 +177,13 @@ public sealed class ProxiesModule : IModule
                 "proxies-provider-account-sync",
                 j => j.RunAsync(CancellationToken.None),
                 "0 * * * *", // hourly
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
+            // Active connectivity probe of every Active proxy, every 15 minutes.
+            jobManager.AddOrUpdate<Jobs.ProxyActiveHealthCheckJob>(
+                "proxies-active-health-check",
+                j => j.RunAsync(CancellationToken.None),
+                "*/15 * * * *",
                 new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
         }
     }
