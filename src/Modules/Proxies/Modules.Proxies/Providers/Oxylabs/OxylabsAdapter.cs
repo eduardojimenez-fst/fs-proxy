@@ -26,8 +26,23 @@ public sealed class OxylabsAdapter(IHttpClientFactory httpClientFactory) : IProx
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        var credentials = JsonSerializer.Deserialize<OxylabsCredentials>(decryptedCredentials)
-            ?? throw new InvalidOperationException("Oxylabs credentials could not be parsed.");
+        // See WebShareAdapter: malformed stored credentials must return Failed so
+        // ProviderAccountSyncService records the sync failure instead of an opaque 500 escaping
+        // the sync-now endpoint and leaving ConsecutiveSyncFailures untouched.
+        OxylabsCredentials? credentials;
+        try
+        {
+            credentials = JsonSerializer.Deserialize<OxylabsCredentials>(decryptedCredentials);
+        }
+        catch (JsonException ex)
+        {
+            return ProviderSyncResult.Failed($"Invalid credentials JSON: {ex.Message}");
+        }
+
+        if (credentials is null)
+        {
+            return ProviderSyncResult.Failed("Invalid credentials JSON: Oxylabs credentials could not be parsed.");
+        }
 
         using var client = httpClientFactory.CreateClient(ClientName);
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.oxylabs.io/v1/proxies");

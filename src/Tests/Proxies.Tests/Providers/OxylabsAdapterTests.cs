@@ -75,6 +75,22 @@ public sealed class OxylabsAdapterTests
         result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
     }
 
+    [Theory]
+    [InlineData("raw-username-not-json")]
+    [InlineData("{\"Username\":")]
+    [InlineData("")]
+    [InlineData("null")]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_CredentialsAreNotValidJson(string credentials)
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK));
+        var account = ProviderAccount.Create("Oxylabs", ProxyProviderType.Oxylabs, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, credentials, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorMessage.ShouldStartWith("Invalid credentials JSON");
+    }
+
     [Fact]
     public void SupportsRenew_Should_BeFalse() =>
         new OxylabsAdapter(Substitute.For<IHttpClientFactory>()).SupportsRenew.ShouldBeFalse();

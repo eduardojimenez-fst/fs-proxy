@@ -60,6 +60,33 @@ public sealed class WebShareAdapterTests
         result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
     }
 
+    [Theory]
+    [InlineData("raw-api-key-not-json")]
+    [InlineData("{\"ApiKey\":")]
+    [InlineData("")]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_CredentialsAreNotValidJson(string credentials)
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK));
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, credentials, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorMessage.ShouldStartWith("Invalid credentials JSON");
+    }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_CredentialsAreJsonNull()
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK));
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "null", CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorMessage.ShouldStartWith("Invalid credentials JSON");
+    }
+
     [Fact]
     public void SupportsRenew_Should_BeFalse() =>
         new WebShareAdapter(Substitute.For<IHttpClientFactory>()).SupportsRenew.ShouldBeFalse();

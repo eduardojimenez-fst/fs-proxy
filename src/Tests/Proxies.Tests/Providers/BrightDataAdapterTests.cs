@@ -59,6 +59,22 @@ public sealed class BrightDataAdapterTests
         result.Success.ShouldBeFalse();
     }
 
+    [Theory]
+    [InlineData("raw-api-token-not-json")]
+    [InlineData("{\"ApiToken\":")]
+    [InlineData("")]
+    [InlineData("null")]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_CredentialsAreNotValidJson(string credentials)
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK));
+        var account = ProviderAccount.Create("BrightData", ProxyProviderType.BrightData, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, credentials, CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorMessage.ShouldStartWith("Invalid credentials JSON");
+    }
+
     [Fact]
     public void SupportsRenew_Should_BeFalse() =>
         new BrightDataAdapter(Substitute.For<IHttpClientFactory>()).SupportsRenew.ShouldBeFalse();

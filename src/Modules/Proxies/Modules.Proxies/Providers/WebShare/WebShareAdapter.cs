@@ -23,8 +23,25 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
     {
         ArgumentNullException.ThrowIfNull(account);
 
-        var credentials = JsonSerializer.Deserialize<WebShareCredentials>(decryptedCredentials)
-            ?? throw new InvalidOperationException("WebShare credentials could not be parsed.");
+        // Malformed stored credentials (e.g. an admin pasted a bare API key instead of the
+        // expected {"ApiKey":"..."} JSON) must surface as a normal sync failure, not an unhandled
+        // exception: only the Failed path reaches ProviderAccountSyncService's
+        // RecordSyncResult(success: false, ...) and so increments ConsecutiveSyncFailures towards
+        // the admin notification threshold.
+        WebShareCredentials? credentials;
+        try
+        {
+            credentials = JsonSerializer.Deserialize<WebShareCredentials>(decryptedCredentials);
+        }
+        catch (JsonException ex)
+        {
+            return ProviderSyncResult.Failed($"Invalid credentials JSON: {ex.Message}");
+        }
+
+        if (credentials is null)
+        {
+            return ProviderSyncResult.Failed("Invalid credentials JSON: WebShare credentials could not be parsed.");
+        }
 
         using var client = httpClientFactory.CreateClient(ClientName);
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page_size=100");
