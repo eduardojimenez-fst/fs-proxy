@@ -45,6 +45,10 @@ const ProviderAccountsListPage = lazyNamed(
   () => import("@/pages/proxies/provider-accounts"),
   "ProviderAccountsListPage",
 );
+const ManualProxiesListPage = lazyNamed(
+  () => import("@/pages/proxies/manual-proxies"),
+  "ManualProxiesListPage",
+);
 const HealthPage = lazyNamed(() => import("@/pages/health/page"), "HealthPage");
 const ImpersonationListPage = lazyNamed(() => import("@/pages/impersonation/list"), "ImpersonationListPage");
 const WebhooksListPage = lazyNamed(() => import("@/pages/webhooks/list"), "WebhooksListPage");
@@ -67,16 +71,6 @@ const ConfirmEmailPage = lazyNamed(
   () => import("@/pages/auth/confirm-email"),
   "ConfirmEmailPage",
 );
-
-// Temporary placeholder for the Proxies routes — real pages land in Tasks
-// 26–28. Not lazy-loaded since it's trivial and has no page module to chunk.
-function ProxiesComingSoon() {
-  return (
-    <div className="p-6 text-sm text-[var(--color-muted-foreground)]">
-      Proxies pages are coming soon.
-    </div>
-  );
-}
 
 // Each route's element is wrapped in RouteGuard with the same permissions the
 // server endpoint requires, so the UI mirrors server-side authorization. Auth
@@ -212,11 +206,6 @@ export const router = createBrowserRouter([
           },
 
           // Proxies — provider accounts / manual proxies / tag-scoped enable-disable.
-          // Page components land in Tasks 26–28; until then the remaining routes
-          // render a placeholder so permission gating + path wiring can be
-          // verified now.
-          // TODO(proxies-frontend): swap the remaining placeholder for a lazyNamed
-          // page import (/manual-proxies) once that page exists (Task 28).
           {
             path: "proxies",
             element: (
@@ -237,7 +226,7 @@ export const router = createBrowserRouter([
             path: "proxies/manual",
             element: (
               <RouteGuard perms={[ProxiesPermissions.ManualProxies.View]}>
-                <ProxiesComingSoon />
+                <ManualProxiesListPage />
               </RouteGuard>
             ),
           },
