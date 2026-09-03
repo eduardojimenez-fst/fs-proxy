@@ -16,12 +16,16 @@ public sealed class ProxyActiveHealthCheckJob(
     [AutomaticRetry(Attempts = 0)] // a single proxy's connectivity failure IS the signal being measured — never retry the batch
     public async Task RunAsync(CancellationToken cancellationToken)
     {
-        var activeProxyIds = await dbContext.Proxies
-            .Where(p => p.Status == ProxyStatus.Active)
+        // Testing is probed alongside Active on purpose: Proxy.Create and Proxy.MarkRenewed both
+        // land a proxy in Testing, and this job is the only thing that promotes it out (see
+        // CheckOneProxyAsync). Without Testing in this predicate every freshly-synced or renewed
+        // proxy would sit unprobed and unusable until an admin enabled it by hand.
+        var probeProxyIds = await dbContext.Proxies
+            .Where(p => p.Status == ProxyStatus.Active || p.Status == ProxyStatus.Testing)
             .Select(p => p.Id)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        foreach (var proxyId in activeProxyIds)
+        foreach (var proxyId in probeProxyIds)
         {
             try
             {
@@ -48,6 +52,16 @@ public sealed class ProxyActiveHealthCheckJob(
 
             dbContext.ProxyUsageEvents.Add(ProxyUsageEvent.Create(
                 proxyId, UsageEventSource.SystemHealthCheck, outcome, target.TargetId, reportedByApiClientId: null, detail));
+
+            if (ProxyHealthCheckOutcomeClassifier.ShouldPromoteToActive(proxy.Status, outcome))
+            {
+                proxy.SetStatus(ProxyStatus.Active);
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    logger.LogInformation("Proxy {ProxyId} promoted from Testing to Active after a successful health check.", proxyId);
+                }
+            }
+
             await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
             await policyEvaluationService.EvaluateAsync(proxyId, cancellationToken).ConfigureAwait(false);
@@ -57,7 +71,7 @@ public sealed class ProxyActiveHealthCheckJob(
     private static async Task<(UsageEventOutcome Outcome, string? Detail)> ProbeAsync(
         Proxy proxy, string? password, ResolvedHealthCheckTarget target, CancellationToken cancellationToken)
     {
-        var webProxy = new WebProxy($"{(proxy.Protocol == ProxyProtocol.Https ? "https" : "http")}://{proxy.Host}:{proxy.Port}");
+        var webProxy = new WebProxy(ProxyProbeUriBuilder.Build(proxy.Protocol, proxy.Host, proxy.Port));
         if (!string.IsNullOrEmpty(proxy.Username))
         {
             webProxy.Credentials = new NetworkCredential(proxy.Username, password);

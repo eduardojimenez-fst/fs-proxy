@@ -27,4 +27,23 @@ public sealed class ProxyHealthCheckOutcomeClassifierTests
     [Fact]
     public void Classify_Should_ReturnFailure_When_BodyKeywordMissing() =>
         ProxyHealthCheckOutcomeClassifier.Classify(false, HttpStatusCode.OK, "pagina de error", 200, "licitaciones").ShouldBe(UsageEventOutcome.Failure);
+
+    [Fact]
+    public void ShouldPromoteToActive_Should_BeTrue_When_TestingProxyProbesSuccessfully() =>
+        ProxyHealthCheckOutcomeClassifier.ShouldPromoteToActive(ProxyStatus.Testing, UsageEventOutcome.Success).ShouldBeTrue();
+
+    [Theory]
+    [InlineData(UsageEventOutcome.Failure)]
+    [InlineData(UsageEventOutcome.Timeout)]
+    [InlineData(UsageEventOutcome.Banned)]
+    public void ShouldPromoteToActive_Should_BeFalse_When_TestingProxyProbeFails(UsageEventOutcome outcome) =>
+        ProxyHealthCheckOutcomeClassifier.ShouldPromoteToActive(ProxyStatus.Testing, outcome).ShouldBeFalse();
+
+    [Theory]
+    [InlineData(ProxyStatus.Active)]
+    [InlineData(ProxyStatus.Disabled)]
+    [InlineData(ProxyStatus.Banned)]
+    [InlineData(ProxyStatus.Retired)]
+    public void ShouldPromoteToActive_Should_BeFalse_When_ProxyIsNotTesting(ProxyStatus status) =>
+        ProxyHealthCheckOutcomeClassifier.ShouldPromoteToActive(status, UsageEventOutcome.Success).ShouldBeFalse();
 }

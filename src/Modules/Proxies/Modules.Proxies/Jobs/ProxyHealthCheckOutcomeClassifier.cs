@@ -20,4 +20,14 @@ public static class ProxyHealthCheckOutcomeClassifier
 
         return UsageEventOutcome.Success;
     }
+
+    /// <summary>
+    /// A proxy sits in <see cref="ProxyStatus.Testing"/> from the moment it is synced
+    /// (<c>Proxy.Create</c>) or renewed (<c>Proxy.MarkRenewed</c>). The active health check is the
+    /// only thing that promotes it: one successful probe is enough to make it servable. Anything
+    /// other than a successful probe on a Testing proxy leaves the status alone — the recorded
+    /// usage event plus <c>PolicyEvaluationService</c> already own that decision.
+    /// </summary>
+    public static bool ShouldPromoteToActive(ProxyStatus currentStatus, UsageEventOutcome outcome) =>
+        currentStatus == ProxyStatus.Testing && outcome == UsageEventOutcome.Success;
 }

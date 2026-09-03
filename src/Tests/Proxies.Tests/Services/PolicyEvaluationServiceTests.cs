@@ -20,6 +20,9 @@ public sealed class PolicyEvaluationServiceTests
         var tag = Tag.Create("pais:cl");
         var policy = PolicyProfile.Create("critical", type, threshold, windowMinutes: 60, minDistinctReporters: minReporters);
         var proxy = Proxy.Create(ManualProviderAccount.Id, "1.1.1.1", 8080, ProxyProtocol.Http, null, null, null);
+        // Proxy.Create lands in Testing; the policy engine only acts on Active proxies (the
+        // idempotency guard), so every scenario here starts from a promoted, servable proxy.
+        proxy.SetStatus(ProxyStatus.Active);
         proxy.AssignTag(tag.Id);
         db.Tags.Add(tag);
         db.PolicyProfiles.Add(policy);
@@ -80,7 +83,7 @@ public sealed class PolicyEvaluationServiceTests
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
-        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Testing);
+        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Active);
     }
 
     [Fact]
@@ -96,7 +99,7 @@ public sealed class PolicyEvaluationServiceTests
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
-        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Testing);
+        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Active);
     }
 
     [Fact]
@@ -104,6 +107,7 @@ public sealed class PolicyEvaluationServiceTests
     {
         await using var db = CreateDb();
         var proxy = Proxy.Create(ManualProviderAccount.Id, "1.1.1.1", 8080, ProxyProtocol.Http, null, null, null);
+        proxy.SetStatus(ProxyStatus.Active);
         db.Proxies.Add(proxy);
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, null, null));
         await db.SaveChangesAsync();
@@ -111,6 +115,55 @@ public sealed class PolicyEvaluationServiceTests
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
+        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Active);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_Should_BeIdempotent_When_ProxyIsAlreadyDisabled()
+    {
+        await using var db = CreateDb();
+        var (proxy, _, _) = await SeedProxyWithPolicyAsync(db, PolicyProfileType.AutoDisableAndRenew, threshold: 1, minReporters: 1);
+        var reporter = ApiClient.Create("scraper-a", "hash-a");
+        db.ApiClients.Add(reporter);
+        db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporter.Id, null));
+        await db.SaveChangesAsync();
+        var renewalService = Substitute.For<IProxyRenewalService>();
+        var sut = new PolicyEvaluationService(db, renewalService);
+
+        // First burst member disables + renews...
+        await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
+        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Disabled);
+        await renewalService.Received(1).TriggerAsync(proxy.Id, Arg.Any<CancellationToken>());
+
+        // ...every later report in the same burst must be a no-op, or each one publishes its own
+        // ManualProxyNeedsAttentionIntegrationEvent through the renewal service.
+        db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporter.Id, null));
+        await db.SaveChangesAsync();
+
+        await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
+        await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
+
+        await renewalService.Received(1).TriggerAsync(proxy.Id, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_Should_DoNothing_When_ProxyIsStillTesting()
+    {
+        await using var db = CreateDb();
+        var (proxy, _, _) = await SeedProxyWithPolicyAsync(db, PolicyProfileType.AutoDisableAndRenew, threshold: 1, minReporters: 1);
+        // A renewal leaves the proxy back in Testing while the failure events that triggered it are
+        // still inside the policy window — re-evaluating must not disable-and-renew a second time.
+        (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).SetStatus(ProxyStatus.Testing);
+        var reporter = ApiClient.Create("scraper-a", "hash-a");
+        db.ApiClients.Add(reporter);
+        db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporter.Id, null));
+        await db.SaveChangesAsync();
+        var renewalService = Substitute.For<IProxyRenewalService>();
+        var sut = new PolicyEvaluationService(db, renewalService);
+
+        await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
+
         (await db.Proxies.SingleAsync(p => p.Id == proxy.Id)).Status.ShouldBe(ProxyStatus.Testing);
+        await renewalService.DidNotReceive().TriggerAsync(Arg.Any<Guid>(), Arg.Any<CancellationToken>());
     }
 }

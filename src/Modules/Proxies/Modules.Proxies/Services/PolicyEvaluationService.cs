@@ -20,6 +20,18 @@ public sealed class PolicyEvaluationService(ProxiesDbContext dbContext, IProxyRe
         var proxy = await dbContext.Proxies.FirstOrDefaultAsync(p => p.Id == proxyId, cancellationToken).ConfigureAwait(false);
         if (proxy is null) return;
 
+        // Idempotency guard. Only an Active proxy is a candidate for the policy to act on:
+        //  - Disabled/Banned/Retired means the policy (or an admin) has already acted, and a burst
+        //    of concurrent feedback reports for the same banned proxy must not re-run
+        //    SetStatus(Disabled) + IProxyRenewalService.TriggerAsync N times, each of which can
+        //    publish its own ManualProxyNeedsAttentionIntegrationEvent (notification storm).
+        //  - Testing means the proxy is not being served yet (RequestProxies only returns Active)
+        //    and is awaiting promotion by the active health check, so there is nothing to disable.
+        //    This also closes the renew loop: a successful renewal calls Proxy.MarkRenewed(), which
+        //    puts the proxy back in Testing while the old failure events are still inside the
+        //    policy window — without this guard the very next event would disable-and-renew again.
+        if (proxy.Status != ProxyStatus.Active) return;
+
         var tagIds = await dbContext.Set<ProxyTagAssignment>().Where(a => a.ProxyId == proxyId).Select(a => a.TagId).ToListAsync(cancellationToken).ConfigureAwait(false);
         if (tagIds.Count == 0) return;
 
