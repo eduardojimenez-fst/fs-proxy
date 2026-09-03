@@ -99,6 +99,8 @@ public sealed class ProxiesModule : IModule
         builder.Services.AddScoped<IProxyProviderAdapterFactory, ProxyProviderAdapterFactory>();
 
         builder.Services.AddScoped<IProviderAccountSyncService, ProviderAccountSyncService>();
+        builder.Services.AddScoped<IProxyRenewalService, ProxyRenewalService>();
+        builder.Services.AddScoped<IPolicyEvaluationService, PolicyEvaluationService>();
 
         builder.Services.AddHealthChecks()
             .AddDbContextCheck<ProxiesDbContext>(name: "db:proxies", failureStatus: HealthStatus.Unhealthy);
