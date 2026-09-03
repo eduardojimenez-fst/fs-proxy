@@ -32,6 +32,7 @@ using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
 using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
 using FSH.Modules.Proxies.Providers;
+using FSH.Modules.Proxies.Providers.Oxylabs;
 using FSH.Modules.Proxies.Providers.WebShare;
 using FSH.Modules.Proxies.Services;
 using Microsoft.AspNetCore.Builder;
@@ -83,6 +84,10 @@ public sealed class ProxiesModule : IModule
         builder.Services.AddHttpClient("ProxyProvider:WebShare")
             .AddHeroResilience(builder.Configuration);
         builder.Services.AddScoped<IProxyProviderAdapter, WebShareAdapter>();
+
+        builder.Services.AddHttpClient("ProxyProvider:Oxylabs")
+            .AddHeroResilience(builder.Configuration);
+        builder.Services.AddScoped<IProxyProviderAdapter, OxylabsAdapter>();
 
         builder.Services.AddScoped<IProxyProviderAdapterFactory, ProxyProviderAdapterFactory>();
 
