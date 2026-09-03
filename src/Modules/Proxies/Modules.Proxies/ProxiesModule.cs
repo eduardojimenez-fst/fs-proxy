@@ -3,6 +3,7 @@ using FSH.Framework.Persistence;
 using FSH.Framework.Shared.Constants;
 using FSH.Framework.Web.HttpResilience;
 using FSH.Framework.Web.Modules;
+using FSH.Modules.Proxies.Authentication;
 using FSH.Modules.Proxies.Contracts.Authorization;
 using FSH.Modules.Proxies.Data;
 using FSH.Modules.Proxies.Features.v1.ApiClients.CreateApiClient;
@@ -116,6 +117,26 @@ public sealed class ProxiesModule : IModule
 
         builder.Services.AddHealthChecks()
             .AddDbContextCheck<ProxiesDbContext>(name: "db:proxies", failureStatus: HealthStatus.Unhealthy);
+
+        // Dual authentication (Task 22): a new "ApiKey" scheme for the two consumer-facing
+        // endpoints landing in Tasks 23-24, added alongside — never replacing — the JWT scheme
+        // the Identity module already registers. AddAuthentication() (parameterless) adds the
+        // scheme into Identity's existing AuthenticationBuilder without touching
+        // DefaultAuthenticateScheme/DefaultChallengeScheme, so JWT stays the default for every
+        // other endpoint. The "ProxiesConsumerAccess" policy accepts either scheme; admin
+        // endpoints in this module keep using the app-wide default RequirePermission policy
+        // (JWT-only), unchanged.
+        builder.Services.AddScoped<IApiKeyAuthenticator, ApiKeyAuthenticator>();
+
+        builder.Services.AddAuthentication()
+            .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
+                ApiKeyAuthenticationDefaults.SchemeName, _ => { });
+
+        builder.Services.AddAuthorizationBuilder()
+            .AddPolicy(ApiKeyAuthenticationDefaults.ConsumerPolicyName, policy =>
+                policy
+                    .AddAuthenticationSchemes(ApiKeyAuthenticationDefaults.SchemeName, Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerDefaults.AuthenticationScheme)
+                    .RequireAuthenticatedUser());
     }
 
     public void ConfigureMiddleware(IApplicationBuilder app)

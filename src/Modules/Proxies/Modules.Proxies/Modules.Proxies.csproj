@@ -6,8 +6,21 @@
 		<!-- S1075: provider adapters (WebShare, and Oxylabs/BrightData in later tasks) call fixed,
 		     documented vendor API base URLs — these are not user/tenant-supplied and are expected
 		     to be literal constants rather than configuration. -->
-		<NoWarn>$(NoWarn);CA1031;CA1812;CA1859;S3267;S1481;S1075</NoWarn>
+		<NoWarn>$(NoWarn);CA1031;CA1812;CA1859;S3267;S1481;S1075;S2094</NoWarn>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Needed for JwtBearerDefaults.AuthenticationScheme (Task 22's dual-auth policy):
+		     Microsoft.AspNetCore.Authentication.JwtBearer ships out-of-band from the
+		     Microsoft.AspNetCore.App shared framework (confirmed empirically — a
+		     <FrameworkReference Include="Microsoft.AspNetCore.App" /> alone does not resolve
+		     it), so it needs an explicit PackageReference here exactly like Modules.Identity
+		     already has. This module never registers its own JWT bearer handler; it only
+		     references the scheme name constant to build an authorization policy that accepts
+		     either "ApiKey" or the existing JWT scheme.
+		-->
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\..\BuildingBlocks\Persistence\Persistence.csproj" />
