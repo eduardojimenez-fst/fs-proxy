@@ -34,6 +34,7 @@ public sealed class ProviderAccountSyncServiceTests
 
         var adapter = Substitute.For<IProxyProviderAdapter>();
         adapter.ProviderType.Returns(ProxyProviderType.WebShare);
+        adapter.SupportsSync.Returns(true);
         adapter.SyncProxiesAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ProviderSyncResult.Ok([
                 new ProviderProxyRecord("ext-existing", "new-ip", 3333, ProxyProtocol.Http, "u", "p", true),
@@ -62,6 +63,7 @@ public sealed class ProviderAccountSyncServiceTests
 
         var adapter = Substitute.For<IProxyProviderAdapter>();
         adapter.ProviderType.Returns(ProxyProviderType.Oxylabs);
+        adapter.SupportsSync.Returns(true);
         adapter.SyncProxiesAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ProviderSyncResult.Failed("401 Unauthorized"));
         var factory = Substitute.For<IProxyProviderAdapterFactory>();

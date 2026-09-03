@@ -32,6 +32,10 @@ public sealed class ProviderAccountSyncService(
             ?? throw new NotFoundException($"Provider account {providerAccountId} not found.");
 
         var adapter = adapterFactory.GetAdapter(account.ProviderType);
+        if (!adapter.SupportsSync)
+        {
+            return 0;
+        }
 
         var decrypted = protector.Unprotect(account.ProtectedCredentials);
         var result = await adapter.SyncProxiesAsync(account, decrypted, cancellationToken).ConfigureAwait(false);
