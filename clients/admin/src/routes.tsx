@@ -40,6 +40,7 @@ const InvoicesListPage = lazyNamed(() => import("@/pages/billing/invoices-list")
 const InvoiceDetailPage = lazyNamed(() => import("@/pages/billing/invoice-detail"), "InvoiceDetailPage");
 const TopupsListPage = lazyNamed(() => import("@/pages/billing/topups-list"), "TopupsListPage");
 const AuditsListPage = lazyNamed(() => import("@/pages/audits/list"), "AuditsListPage");
+const ProxiesListPage = lazyNamed(() => import("@/pages/proxies/list"), "ProxiesListPage");
 const HealthPage = lazyNamed(() => import("@/pages/health/page"), "HealthPage");
 const ImpersonationListPage = lazyNamed(() => import("@/pages/impersonation/list"), "ImpersonationListPage");
 const WebhooksListPage = lazyNamed(() => import("@/pages/webhooks/list"), "WebhooksListPage");
@@ -207,16 +208,16 @@ export const router = createBrowserRouter([
           },
 
           // Proxies — provider accounts / manual proxies / tag-scoped enable-disable.
-          // Page components land in Tasks 26–28; until then these routes render a
-          // placeholder so permission gating + path wiring can be verified now.
+          // Page components land in Tasks 26–28; until then the remaining routes
+          // render a placeholder so permission gating + path wiring can be
+          // verified now.
           // TODO(proxies-frontend): swap these placeholders for lazyNamed page
-          // imports (@/pages/proxies/list, /provider-accounts, /manual-proxies)
-          // once those pages exist.
+          // imports (/provider-accounts, /manual-proxies) once those pages exist.
           {
             path: "proxies",
             element: (
               <RouteGuard perms={[ProxiesPermissions.ProviderAccounts.View]}>
-                <ProxiesComingSoon />
+                <ProxiesListPage />
               </RouteGuard>
             ),
           },
