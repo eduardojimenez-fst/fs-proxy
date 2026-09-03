@@ -12,6 +12,7 @@ import {
   BillingPermissions,
   IdentityPermissions,
   MultitenancyPermissions,
+  ProxiesPermissions,
   WebhooksPermissions,
 } from "@/lib/permissions";
 
@@ -61,6 +62,16 @@ const ConfirmEmailPage = lazyNamed(
   () => import("@/pages/auth/confirm-email"),
   "ConfirmEmailPage",
 );
+
+// Temporary placeholder for the Proxies routes — real pages land in Tasks
+// 26–28. Not lazy-loaded since it's trivial and has no page module to chunk.
+function ProxiesComingSoon() {
+  return (
+    <div className="p-6 text-sm text-[var(--color-muted-foreground)]">
+      Proxies pages are coming soon.
+    </div>
+  );
+}
 
 // Each route's element is wrapped in RouteGuard with the same permissions the
 // server endpoint requires, so the UI mirrors server-side authorization. Auth
@@ -193,6 +204,37 @@ export const router = createBrowserRouter([
           {
             path: "audits/:id",
             element: <Navigate to="/audits" replace />,
+          },
+
+          // Proxies — provider accounts / manual proxies / tag-scoped enable-disable.
+          // Page components land in Tasks 26–28; until then these routes render a
+          // placeholder so permission gating + path wiring can be verified now.
+          // TODO(proxies-frontend): swap these placeholders for lazyNamed page
+          // imports (@/pages/proxies/list, /provider-accounts, /manual-proxies)
+          // once those pages exist.
+          {
+            path: "proxies",
+            element: (
+              <RouteGuard perms={[ProxiesPermissions.ProviderAccounts.View]}>
+                <ProxiesComingSoon />
+              </RouteGuard>
+            ),
+          },
+          {
+            path: "proxies/provider-accounts",
+            element: (
+              <RouteGuard perms={[ProxiesPermissions.ProviderAccounts.View]}>
+                <ProxiesComingSoon />
+              </RouteGuard>
+            ),
+          },
+          {
+            path: "proxies/manual",
+            element: (
+              <RouteGuard perms={[ProxiesPermissions.ManualProxies.View]}>
+                <ProxiesComingSoon />
+              </RouteGuard>
+            ),
           },
 
           // Webhooks — list/detail both read subscriptions, which the server
