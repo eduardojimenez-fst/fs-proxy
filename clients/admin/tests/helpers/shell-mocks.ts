@@ -38,6 +38,14 @@ export const ADMIN_PERMS = [
   "Permissions.Webhooks.Create",
   "Permissions.Webhooks.Delete",
   "Permissions.Webhooks.Test",
+  "Permissions.Proxies.ProviderAccounts.View",
+  "Permissions.Proxies.ProviderAccounts.Create",
+  "Permissions.Proxies.ProviderAccounts.Update",
+  "Permissions.Proxies.ProviderAccounts.Delete",
+  "Permissions.Proxies.ManualProxies.View",
+  "Permissions.Proxies.ManualProxies.Create",
+  "Permissions.Proxies.ManualProxies.Update",
+  "Permissions.Proxies.ManualProxies.Delete",
 ] as const;
 
 export const ADMIN_PROFILE = {
