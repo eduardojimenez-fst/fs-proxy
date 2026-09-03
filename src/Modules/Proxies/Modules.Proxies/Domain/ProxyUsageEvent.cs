@@ -1,9 +1,9 @@
 using FSH.Framework.Core.Domain;
+using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Domain;
 
 public enum UsageEventSource { SystemHealthCheck, ConsumerFeedback }
-public enum UsageEventOutcome { Success, Failure, Banned, Timeout }
 
 public sealed class ProxyUsageEvent : BaseEntity<Guid>, IGlobalEntity
 {

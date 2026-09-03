@@ -1,5 +1,5 @@
 using System.Net;
-using FSH.Modules.Proxies.Domain;
+using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Jobs;
 

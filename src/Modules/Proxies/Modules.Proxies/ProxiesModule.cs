@@ -27,6 +27,7 @@ using FSH.Modules.Proxies.Features.v1.Policies.UpdatePolicyProfile;
 using FSH.Modules.Proxies.Features.v1.Proxies.DisableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.EnableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ListProxies;
+using FSH.Modules.Proxies.Features.v1.Proxies.ReportProxyFeedback;
 using FSH.Modules.Proxies.Features.v1.Proxies.RequestProxies;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
@@ -175,6 +176,7 @@ public sealed class ProxiesModule : IModule
         group.MapEnableProxiesEndpoint();
         group.MapDisableProxiesEndpoint();
         group.MapRequestProxiesEndpoint();
+        group.MapReportProxyFeedbackEndpoint();
 
         group.MapCreateTagEndpoint();
         group.MapDeleteTagEndpoint();

@@ -1,5 +1,5 @@
 using System.Net;
-using FSH.Modules.Proxies.Domain;
+using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Jobs;
 using Shouldly;
 using Xunit;
