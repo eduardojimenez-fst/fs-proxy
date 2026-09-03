@@ -78,4 +78,26 @@ public sealed class ProviderAccountSyncServiceTests
         stored.ConsecutiveSyncFailures.ShouldBe(1);
         stored.LastSyncStatus!.ShouldContain("401");
     }
+
+    [Fact]
+    public async Task SyncAsync_Should_ReturnZero_When_AdapterDoesNotSupportSync()
+    {
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create("Manual", ProxyProviderType.Manual, "{}");
+        db.ProviderAccounts.Add(account);
+        await db.SaveChangesAsync();
+
+        var adapter = Substitute.For<IProxyProviderAdapter>();
+        adapter.ProviderType.Returns(ProxyProviderType.Manual);
+        adapter.SupportsSync.Returns(false);
+        var factory = Substitute.For<IProxyProviderAdapterFactory>();
+        factory.GetAdapter(ProxyProviderType.Manual).Returns(adapter);
+
+        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector());
+
+        var touched = await sut.SyncAsync(account.Id, CancellationToken.None);
+
+        touched.ShouldBe(0);
+        await adapter.DidNotReceive().SyncProxiesAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
+    }
 }
