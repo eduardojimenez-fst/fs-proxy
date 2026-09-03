@@ -1,5 +1,7 @@
 using FSH.Framework.Core.Exceptions;
+using FSH.Framework.Eventing.Abstractions;
 using FSH.Modules.Proxies.Contracts;
+using FSH.Modules.Proxies.Contracts.Events;
 using FSH.Modules.Proxies.Data;
 using FSH.Modules.Proxies.Domain;
 using FSH.Modules.Proxies.Providers;
@@ -23,9 +25,17 @@ namespace FSH.Modules.Proxies.Services;
 /// testable with a fake, matching the precedent set by the ProviderAccount CRUD handlers.
 /// </summary>
 public sealed class ProviderAccountSyncService(
-    ProxiesDbContext dbContext, IProxyProviderAdapterFactory adapterFactory, IProxySecretProtector protector)
+    ProxiesDbContext dbContext, IProxyProviderAdapterFactory adapterFactory, IProxySecretProtector protector,
+    IOutboxWriter outboxWriter)
     : IProviderAccountSyncService
 {
+    /// <summary>
+    /// Consecutive-failure count at which a <see cref="ProviderAccountSyncFailedIntegrationEvent"/>
+    /// is raised so an admin is notified (via <c>Modules.Notifications</c>) that the provider
+    /// account's credentials or the provider itself needs attention.
+    /// </summary>
+    private const int SyncFailureNotificationThreshold = 3;
+
     public async Task<int> SyncAsync(Guid providerAccountId, CancellationToken cancellationToken)
     {
         var account = await dbContext.ProviderAccounts.FirstOrDefaultAsync(x => x.Id == providerAccountId, cancellationToken).ConfigureAwait(false)
@@ -44,6 +54,16 @@ public sealed class ProviderAccountSyncService(
         {
             account.RecordSyncResult(success: false, statusMessage: result.ErrorMessage);
             await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            if (account.ConsecutiveSyncFailures >= SyncFailureNotificationThreshold)
+            {
+                await outboxWriter.AddAsync(
+                    new ProviderAccountSyncFailedIntegrationEvent(
+                        Guid.CreateVersion7(), DateTime.UtcNow, TenantId: null, Guid.NewGuid().ToString(), "Proxies",
+                        account.Id, account.Name, account.ConsecutiveSyncFailures, result.ErrorMessage),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
             return 0;
         }
 

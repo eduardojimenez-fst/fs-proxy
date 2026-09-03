@@ -19,6 +19,7 @@
 		<ProjectReference Include="..\..\Chat\Modules.Chat.Contracts\Modules.Chat.Contracts.csproj" />
 		<ProjectReference Include="..\..\Multitenancy\Modules.Multitenancy.Contracts\Modules.Multitenancy.Contracts.csproj" />
 		<ProjectReference Include="..\..\Billing\Modules.Billing.Contracts\Modules.Billing.Contracts.csproj" />
+		<ProjectReference Include="..\..\Proxies\Modules.Proxies.Contracts\Modules.Proxies.Contracts.csproj" />
 	</ItemGroup>
 
 </Project>

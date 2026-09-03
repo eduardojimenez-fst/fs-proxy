@@ -1,3 +1,4 @@
+using FSH.Framework.Eventing.Abstractions;
 using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Domain;
 using FSH.Modules.Proxies.Providers;
@@ -42,7 +43,7 @@ public sealed class ProviderAccountSyncServiceTests
         var factory = Substitute.For<IProxyProviderAdapterFactory>();
         factory.GetAdapter(ProxyProviderType.WebShare).Returns(adapter);
 
-        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector());
+        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector(), Substitute.For<IOutboxWriter>());
 
         var touched = await sut.SyncAsync(account.Id, CancellationToken.None);
 
@@ -69,7 +70,7 @@ public sealed class ProviderAccountSyncServiceTests
         var factory = Substitute.For<IProxyProviderAdapterFactory>();
         factory.GetAdapter(ProxyProviderType.Oxylabs).Returns(adapter);
 
-        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector());
+        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector(), Substitute.For<IOutboxWriter>());
 
         var touched = await sut.SyncAsync(account.Id, CancellationToken.None);
 
@@ -93,7 +94,7 @@ public sealed class ProviderAccountSyncServiceTests
         var factory = Substitute.For<IProxyProviderAdapterFactory>();
         factory.GetAdapter(ProxyProviderType.Manual).Returns(adapter);
 
-        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector());
+        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector(), Substitute.For<IOutboxWriter>());
 
         var touched = await sut.SyncAsync(account.Id, CancellationToken.None);
 

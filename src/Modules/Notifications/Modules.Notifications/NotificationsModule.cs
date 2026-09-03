@@ -10,6 +10,7 @@ using FSH.Modules.Notifications.Features.v1.GetUnreadCount;
 using FSH.Modules.Notifications.Features.v1.ListNotifications;
 using FSH.Modules.Notifications.Features.v1.MarkAllNotificationsRead;
 using FSH.Modules.Notifications.Features.v1.MarkNotificationRead;
+using FSH.Modules.Notifications.Options;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -35,6 +36,11 @@ public sealed class NotificationsModule : IModule
         builder.Services.AddHeroDbContext<NotificationsDbContext>();
         builder.Services.AddScoped<IDbInitializer, NotificationsDbInitializer>();
         builder.Services.AddValidatorsFromAssembly(typeof(NotificationsModule).Assembly);
+
+        // No .ValidateOnStart()/required-field validation: an unset AdminUserId is the expected
+        // state on a fresh install and must not fail app startup — see ProxiesAlertOptions.
+        builder.Services.AddOptions<ProxiesAlertOptions>()
+            .BindConfiguration(nameof(ProxiesAlertOptions));
 
         // Subscribe to cross-module integration events handled by this assembly.
         builder.Services.AddIntegrationEventHandlers(typeof(NotificationsModule).Assembly);
