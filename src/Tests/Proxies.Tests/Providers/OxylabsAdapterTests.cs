@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Domain;
 using FSH.Modules.Proxies.Providers.Oxylabs;
 using Microsoft.Extensions.DependencyInjection;
+using NSubstitute;
 using Shouldly;
 using Xunit;
 
@@ -43,6 +45,8 @@ public sealed class OxylabsAdapterTests
         result.Success.ShouldBeTrue();
         result.Proxies.Single().Host.ShouldBe("5.6.7.8");
         handler.LastRequest!.Headers.Authorization!.Scheme.ShouldBe("Basic");
+        var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(handler.LastRequest!.Headers.Authorization!.Parameter!));
+        decoded.ShouldBe("acct:secret");
     }
 
     [Fact]
@@ -58,4 +62,20 @@ public sealed class OxylabsAdapterTests
 
         result.Proxies.Select(p => p.ExternalId).ShouldBe(["ext-1"]);
     }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_ResponseIsNotSuccessful()
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        var account = ProviderAccount.Create("Oxylabs", ProxyProviderType.Oxylabs, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"Username\":\"acct\",\"Password\":\"secret\"}", CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+        result.ErrorMessage.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void SupportsRenew_Should_BeFalse() =>
+        new OxylabsAdapter(Substitute.For<IHttpClientFactory>()).SupportsRenew.ShouldBeFalse();
 }
