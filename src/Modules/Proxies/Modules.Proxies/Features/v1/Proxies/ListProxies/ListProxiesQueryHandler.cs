@@ -18,6 +18,8 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
 
         if (query.Status is { } status) q = q.Where(p => p.Status == status);
         if (query.ProviderAccountId is { } accountId) q = q.Where(p => p.ProviderAccountId == accountId);
+        if (!string.IsNullOrWhiteSpace(query.Country))
+            q = q.Where(p => p.Country != null && string.Equals(p.Country, query.Country, StringComparison.OrdinalIgnoreCase));
         if (query.Tags is { Count: > 0 })
         {
             var normalized = query.Tags.Select(Tag.Normalize).ToList();
@@ -43,7 +45,7 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
             p.Id, p.Host, p.Port, p.Protocol, p.Status,
             p.ProviderAccountId, accountNames[p.ProviderAccountId].Name, accountNames[p.ProviderAccountId].ProviderType,
             tagsByProxy.Where(t => t.ProxyId == p.Id).Select(t => t.Name).ToList(),
-            p.CreatedAtUtc, p.LastRenewedAtUtc)).ToList();
+            p.CreatedAtUtc, p.LastRenewedAtUtc, p.Country, p.ProviderGrouping)).ToList();
 
         return new PagedResponse<ProxyDto>
         {

@@ -14,8 +14,8 @@ public static class ListProxiesEndpoint
     internal static RouteHandlerBuilder MapListProxiesEndpoint(this IEndpointRouteBuilder endpoints)
     {
         return endpoints.MapGet("/",
-                (string[]? tags, ProxyStatus? status, Guid? providerAccountId, int pageNumber, int pageSize, IMediator mediator, CancellationToken ct) =>
-                    mediator.Send(new ListProxiesQuery(tags, status, providerAccountId, pageNumber == 0 ? 1 : pageNumber, pageSize == 0 ? 20 : pageSize), ct))
+                (string[]? tags, ProxyStatus? status, Guid? providerAccountId, string? country, int pageNumber, int pageSize, IMediator mediator, CancellationToken ct) =>
+                    mediator.Send(new ListProxiesQuery(tags, status, providerAccountId, country, pageNumber == 0 ? 1 : pageNumber, pageSize == 0 ? 20 : pageSize), ct))
             .WithName("ListProxies")
             .WithSummary("List proxies (paged, filterable by tags/status/provider account)")
             .RequirePermission(ProxiesPermissions.ProviderAccounts.View);

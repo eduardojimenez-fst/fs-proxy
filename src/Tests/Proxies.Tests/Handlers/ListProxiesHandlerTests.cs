@@ -53,4 +53,22 @@ public sealed class ListProxiesHandlerTests
 
         result.Items.Select(x => x.Id).ShouldBe([active.Id]);
     }
+
+    [Fact]
+    public async Task Handle_Should_FilterByCountry_CaseInsensitively()
+    {
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create("Manual", ProxyProviderType.Manual, "protected:x");
+        var chile = Proxy.Create(account.Id, "1.1.1.1", 80, ProxyProtocol.Http, null, null, null, "cl");
+        var argentina = Proxy.Create(account.Id, "2.2.2.2", 80, ProxyProtocol.Http, null, null, null, "AR");
+        db.ProviderAccounts.Add(account);
+        db.Proxies.AddRange(chile, argentina);
+        await db.SaveChangesAsync();
+        var sut = new ListProxiesQueryHandler(db);
+
+        var result = await sut.Handle(new ListProxiesQuery(null, null, null, "CL"), CancellationToken.None);
+
+        result.Items.Select(x => x.Id).ShouldBe([chile.Id]);
+        result.Items.Single().Country.ShouldBe("cl");
+    }
 }
