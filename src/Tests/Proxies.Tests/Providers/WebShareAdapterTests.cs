@@ -46,6 +46,34 @@ public sealed class WebShareAdapterTests
     }
 
     [Fact]
+    public async Task SyncProxiesAsync_Should_AcceptCamelCaseCredentialsJson()
+    {
+        // The admin UI's credentials placeholder shows {"apiKey":"..."} (camelCase) — matching
+        // WebShareCredentials(string ApiKey) requires case-insensitive deserialization, or every
+        // credential pasted via the documented UI silently becomes an empty bearer token and
+        // WebShare returns 401 (confirmed live against a real account).
+        var payload = new WebShareProxyListResponse(0, null, []);
+        var (sut, handler) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(payload) });
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"apiKey\":\"key-123\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        handler.LastRequest!.Headers.Authorization!.ToString().ShouldBe("Token key-123");
+    }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_ApiKeyIsBlank()
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK));
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"ApiKey\":\"   \"}", CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task SyncProxiesAsync_Should_MapResultsToProviderProxyRecords()
     {
         var payload = new WebShareProxyListResponse(1, null, [new WebShareProxyRecord("ext-1", "user", "pass", "1.2.3.4", 8080, true)]);

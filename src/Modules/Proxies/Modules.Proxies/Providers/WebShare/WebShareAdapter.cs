@@ -15,6 +15,12 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
 {
     private const string ClientName = "ProxyProvider:WebShare";
 
+    // The admin UI's credentials placeholder shows {"apiKey":"..."} (camelCase); default
+    // System.Text.Json options are case-sensitive against WebShareCredentials(string ApiKey),
+    // so pasting the documented shape silently yields a null ApiKey (Authorization: Token <empty>)
+    // instead of a decode failure — confirmed live as WebShare returning 401 with no visible parse error.
+    private static readonly JsonSerializerOptions CredentialsJsonOptions = new(JsonSerializerDefaults.Web);
+
     public ProxyProviderType ProviderType => ProxyProviderType.WebShare;
     public bool SupportsSync => true;
     public bool SupportsRenew => false;
@@ -31,7 +37,7 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
         WebShareCredentials? credentials;
         try
         {
-            credentials = JsonSerializer.Deserialize<WebShareCredentials>(decryptedCredentials);
+            credentials = JsonSerializer.Deserialize<WebShareCredentials>(decryptedCredentials, CredentialsJsonOptions);
         }
         catch (JsonException ex)
         {
@@ -41,6 +47,11 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
         if (credentials is null)
         {
             return ProviderSyncResult.Failed("Invalid credentials JSON: WebShare credentials could not be parsed.");
+        }
+
+        if (string.IsNullOrWhiteSpace(credentials.ApiKey))
+        {
+            return ProviderSyncResult.Failed("Invalid credentials JSON: WebShare ApiKey is missing or blank.");
         }
 
         using var client = httpClientFactory.CreateClient(ClientName);
