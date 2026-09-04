@@ -12,6 +12,8 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
     public string? Username { get; private set; }
     public string? ProtectedPassword { get; private set; }
     public string? ExternalId { get; private set; }
+    public string? Country { get; private set; }
+    public string? ProviderGrouping { get; private set; }
     public ProxyStatus Status { get; private set; }
     public DateTime CreatedAtUtc { get; private set; }
     public DateTime? LastRenewedAtUtc { get; private set; }
@@ -23,7 +25,8 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
 
     public static Proxy Create(
         Guid providerAccountId, string host, int port, ProxyProtocol protocol,
-        string? username, string? protectedPassword, string? externalId)
+        string? username, string? protectedPassword, string? externalId,
+        string? country = null, string? providerGrouping = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         return new Proxy
@@ -36,6 +39,8 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
             Username = username,
             ProtectedPassword = protectedPassword,
             ExternalId = externalId,
+            Country = country,
+            ProviderGrouping = providerGrouping,
             Status = ProxyStatus.Testing,
             CreatedAtUtc = DateTime.UtcNow
         };
@@ -43,7 +48,9 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
 
     public void SetStatus(ProxyStatus status) => Status = status;
 
-    public void UpdateConnection(string host, int port, ProxyProtocol protocol, string? username, string? protectedPassword)
+    public void UpdateConnection(
+        string host, int port, ProxyProtocol protocol, string? username, string? protectedPassword,
+        string? country = null, string? providerGrouping = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         Host = host.Trim();
@@ -51,6 +58,8 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
         Protocol = protocol;
         Username = username;
         ProtectedPassword = protectedPassword;
+        Country = country;
+        ProviderGrouping = providerGrouping;
     }
 
     public void MarkRenewed()

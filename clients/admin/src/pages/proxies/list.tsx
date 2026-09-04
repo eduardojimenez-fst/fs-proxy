@@ -34,6 +34,16 @@ const STATUS_OPTIONS: { value: ProxyStatus; label: string }[] = [
 // Desktop grid template — shared by header + rows.
 const DESKTOP_COLS = "grid-cols-[24px_1.3fr_100px_1.2fr_1.4fr_120px]";
 
+// ISO 3166-1 alpha-2 -> regional indicator flag emoji (e.g. "CL" -> 🇨🇱). Provider country codes
+// are always 2 letters (BrightData lowercase via MaxMind, WebShare uppercase) — anything else
+// falls back to no flag rather than rendering garbage.
+function countryFlag(countryCode: string): string {
+  const upper = countryCode.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(upper)) return "";
+  const codePoints = [...upper].map((c) => 127397 + c.charCodeAt(0));
+  return String.fromCodePoint(...codePoints);
+}
+
 function describeError(err: unknown): string {
   if (err instanceof ApiRequestError) return err.problem?.detail ?? err.problem?.title ?? err.message;
   if (err instanceof Error) return err.message;
@@ -65,6 +75,8 @@ export function ProxiesListPage() {
   const [tags, setTags] = useState<string[]>([]);
   const [status, setStatus] = useState<ProxyStatus | "">("");
   const [providerAccountId, setProviderAccountId] = useState("");
+  const [countryInput, setCountryInput] = useState("");
+  const [country, setCountry] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   // Debounce the free-text tags input → the committed `tags` filter.
@@ -81,6 +93,14 @@ export function ProxiesListPage() {
     return () => clearTimeout(t);
   }, [tagsInput]);
 
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setCountry(countryInput.trim());
+      setPageNumber(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [countryInput]);
+
   // Reset to page 1 whenever a dropdown filter changes.
   useEffect(() => {
     setPageNumber(1);
@@ -95,7 +115,7 @@ export function ProxiesListPage() {
   });
 
   const proxiesQuery = useQuery({
-    queryKey: ["proxies", "list", { pageNumber, tags, status, providerAccountId }],
+    queryKey: ["proxies", "list", { pageNumber, tags, status, providerAccountId, country }],
     queryFn: () =>
       listProxies({
         pageNumber,
@@ -103,6 +123,7 @@ export function ProxiesListPage() {
         tags: tags.length > 0 ? tags : undefined,
         status: status || undefined,
         providerAccountId: providerAccountId || undefined,
+        country: country || undefined,
       }),
     placeholderData: keepPreviousData,
   });
@@ -155,12 +176,13 @@ export function ProxiesListPage() {
     });
   }
 
-  const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "";
+  const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "" || country !== "";
 
   const clearFilters = () => {
     setTagsInput("");
     setStatus("");
     setProviderAccountId("");
+    setCountryInput("");
   };
 
   const providerOptions = useMemo(
@@ -209,6 +231,23 @@ export function ProxiesListPage() {
             value={tagsInput}
             onChange={(e) => setTagsInput(e.target.value)}
             className="h-9 w-72 max-w-full rounded-md border border-[var(--color-input)] bg-transparent px-3 font-mono text-[12.5px] outline-none transition-colors placeholder:text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)] focus-visible:border-[var(--color-ring)] focus-visible:ring-[3px] focus-visible:ring-[oklch(from_var(--color-ring)_l_c_h_/_0.5)]"
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="proxies-country"
+            className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
+          >
+            Country
+          </label>
+          <input
+            id="proxies-country"
+            type="search"
+            placeholder="CL"
+            value={countryInput}
+            onChange={(e) => setCountryInput(e.target.value)}
+            className="h-9 w-24 max-w-full rounded-md border border-[var(--color-input)] bg-transparent px-3 font-mono text-[12.5px] outline-none transition-colors placeholder:text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)] focus-visible:border-[var(--color-ring)] focus-visible:ring-[3px] focus-visible:ring-[oklch(from_var(--color-ring)_l_c_h_/_0.5)]"
           />
         </div>
 
@@ -405,7 +444,7 @@ function ProxyDesktopRow({
             {proxy.host}:{proxy.port}
           </span>
           <span className="block truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
-            {proxy.protocol}
+            {proxy.country ? `${proxy.protocol} · ${countryFlag(proxy.country)} ${proxy.country}` : proxy.protocol}
           </span>
         </div>
         <div>
@@ -418,7 +457,7 @@ function ProxyDesktopRow({
             {proxy.providerAccountName}
           </span>
           <span className="block truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
-            {proxy.providerType}
+            {proxy.providerGrouping ? `${proxy.providerType} · ${proxy.providerGrouping}` : proxy.providerType}
           </span>
         </div>
         <span className="truncate text-[12px] text-[var(--color-muted-foreground)]">
@@ -479,7 +518,9 @@ function ProxyMobileCard({
               {proxy.host}:{proxy.port}
             </p>
             <p className="mt-0.5 truncate text-[11px] text-[var(--color-muted-foreground)]">
-              {proxy.providerAccountName} ({proxy.providerType})
+              {proxy.providerAccountName} (
+              {proxy.providerGrouping ? `${proxy.providerType} · ${proxy.providerGrouping}` : proxy.providerType}
+              {proxy.country ? `, ${countryFlag(proxy.country)} ${proxy.country}` : ""})
             </p>
           </div>
         </div>

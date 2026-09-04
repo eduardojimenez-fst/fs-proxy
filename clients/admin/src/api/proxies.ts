@@ -19,12 +19,15 @@ export type ProxyDto = {
   tags: string[];
   createdAtUtc: string;
   lastRenewedAtUtc: string | null;
+  country: string | null;
+  providerGrouping: string | null;
 };
 
 export type ListProxiesParams = {
   tags?: string[];
   status?: ProxyStatus;
   providerAccountId?: string;
+  country?: string;
   pageNumber?: number;
   pageSize?: number;
 };
@@ -35,6 +38,7 @@ export async function listProxies(params: ListProxiesParams = {}): Promise<Paged
   query.set("pageSize", String(params.pageSize ?? 20));
   if (params.status) query.set("status", params.status);
   if (params.providerAccountId) query.set("providerAccountId", params.providerAccountId);
+  if (params.country) query.set("country", params.country);
   for (const tag of params.tags ?? []) query.append("tags", tag);
   return apiFetch<PagedResponse<ProxyDto>>(`${BASE}/?${query.toString()}`);
 }

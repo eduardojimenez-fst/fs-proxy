@@ -13,4 +13,5 @@ public sealed record WebShareProxyRecord(
     [property: JsonPropertyName("password")] string Password,
     [property: JsonPropertyName("proxy_address")] string ProxyAddress,
     [property: JsonPropertyName("port")] int Port,
-    [property: JsonPropertyName("valid")] bool Valid);
+    [property: JsonPropertyName("valid")] bool Valid,
+    [property: JsonPropertyName("country_code")] string? CountryCode = null);

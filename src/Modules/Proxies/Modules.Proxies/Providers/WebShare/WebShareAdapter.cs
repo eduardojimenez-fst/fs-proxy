@@ -15,6 +15,12 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
 {
     private const string ClientName = "ProxyProvider:WebShare";
 
+    // The admin UI's credentials placeholder shows {"apiKey":"..."} (camelCase); default
+    // System.Text.Json options are case-sensitive against WebShareCredentials(string ApiKey),
+    // so pasting the documented shape silently yields a null ApiKey (Authorization: Token <empty>)
+    // instead of a decode failure — confirmed live as WebShare returning 401 with no visible parse error.
+    private static readonly JsonSerializerOptions CredentialsJsonOptions = new(JsonSerializerDefaults.Web);
+
     public ProxyProviderType ProviderType => ProxyProviderType.WebShare;
     public bool SupportsSync => true;
     public bool SupportsRenew => false;
@@ -31,7 +37,7 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
         WebShareCredentials? credentials;
         try
         {
-            credentials = JsonSerializer.Deserialize<WebShareCredentials>(decryptedCredentials);
+            credentials = JsonSerializer.Deserialize<WebShareCredentials>(decryptedCredentials, CredentialsJsonOptions);
         }
         catch (JsonException ex)
         {
@@ -43,23 +49,36 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
             return ProviderSyncResult.Failed("Invalid credentials JSON: WebShare credentials could not be parsed.");
         }
 
-        using var client = httpClientFactory.CreateClient(ClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page_size=100");
-        request.Headers.TryAddWithoutValidation("Authorization", $"Token {credentials.ApiKey}");
-
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        if (string.IsNullOrWhiteSpace(credentials.ApiKey))
         {
-            return ProviderSyncResult.Failed($"WebShare returned {(int)response.StatusCode} {response.ReasonPhrase}.");
+            return ProviderSyncResult.Failed("Invalid credentials JSON: WebShare ApiKey is missing or blank.");
         }
 
-        var payload = await response.Content.ReadFromJsonAsync<WebShareProxyListResponse>(cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("WebShare returned an empty proxy list response.");
+        using var client = httpClientFactory.CreateClient(ClientName);
+        var proxies = new List<ProviderProxyRecord>();
+        string? nextUrl = "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=100";
 
-        var proxies = payload.Results
-            .Where(r => r.Valid)
-            .Select(r => new ProviderProxyRecord(r.Id, r.ProxyAddress, r.Port, ProxyProtocol.Http, r.Username, r.Password, IsActive: true))
-            .ToList();
+        while (nextUrl is not null)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, nextUrl);
+            request.Headers.TryAddWithoutValidation("Authorization", $"Token {credentials.ApiKey}");
+
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return ProviderSyncResult.Failed($"WebShare returned {(int)response.StatusCode} {response.ReasonPhrase}.");
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<WebShareProxyListResponse>(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("WebShare returned an empty proxy list response.");
+
+            proxies.AddRange(payload.Results
+                .Where(r => r.Valid)
+                .Select(r => new ProviderProxyRecord(r.Id, r.ProxyAddress, r.Port, ProxyProtocol.Http, r.Username, r.Password,
+                    IsActive: true, Country: r.CountryCode, ProviderGrouping: "Proxy List")));
+
+            nextUrl = payload.Next;
+        }
 
         return ProviderSyncResult.Ok(proxies);
     }

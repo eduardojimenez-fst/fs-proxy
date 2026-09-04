@@ -3,11 +3,8 @@ using System.Text.Json.Serialization;
 namespace FSH.Modules.Proxies.Providers.BrightData;
 
 public sealed record BrightDataZoneIpsResponse(
-    [property: JsonPropertyName("ips")] IReadOnlyList<BrightDataIpRecord> Ips);
+    [property: JsonPropertyName("ips")] IReadOnlyList<BrightDataZoneIpRecord> Ips);
 
-public sealed record BrightDataIpRecord(
+public sealed record BrightDataZoneIpRecord(
     [property: JsonPropertyName("ip")] string Ip,
-    [property: JsonPropertyName("port")] int Port,
-    [property: JsonPropertyName("customer")] string Customer,
-    [property: JsonPropertyName("zone")] string Zone,
-    [property: JsonPropertyName("password")] string Password);
+    [property: JsonPropertyName("maxmind")] string? Maxmind);
