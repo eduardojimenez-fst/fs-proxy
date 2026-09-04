@@ -67,3 +67,15 @@ export async function disableProxies(input: SetProxiesStatusInput): Promise<numb
 export async function setProxiesStatus(input: SetProxiesStatusInput, status: "Active" | "Disabled"): Promise<number> {
   return status === "Active" ? enableProxies(input) : disableProxies(input);
 }
+
+export async function setProxyTags(proxyId: string, tagNames: string[]): Promise<void> {
+  await apiFetch<void>(`${BASE}/${proxyId}/tags`, { method: "PUT", body: JSON.stringify({ tagNames }) });
+}
+
+export async function assignProxyTag(proxyIds: string[], tagName: string): Promise<number> {
+  return apiFetch<number>(`${BASE}/tags/assign`, { method: "POST", body: JSON.stringify({ proxyIds, tagName }) });
+}
+
+export async function unassignProxyTag(proxyIds: string[], tagName: string): Promise<number> {
+  return apiFetch<number>(`${BASE}/tags/unassign`, { method: "POST", body: JSON.stringify({ proxyIds, tagName }) });
+}

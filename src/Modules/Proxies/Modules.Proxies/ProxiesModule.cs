@@ -24,17 +24,26 @@ using FSH.Modules.Proxies.Features.v1.Policies.DeletePolicyProfile;
 using FSH.Modules.Proxies.Features.v1.Policies.ListPolicyProfiles;
 using FSH.Modules.Proxies.Features.v1.Policies.UnassignPolicyFromTag;
 using FSH.Modules.Proxies.Features.v1.Policies.UpdatePolicyProfile;
+using FSH.Modules.Proxies.Features.v1.Proxies.AssignProxyTag;
 using FSH.Modules.Proxies.Features.v1.Proxies.DisableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.EnableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ListProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ReportProxyFeedback;
 using FSH.Modules.Proxies.Features.v1.Proxies.RequestProxies;
+using FSH.Modules.Proxies.Features.v1.Proxies.SetProxyTags;
+using FSH.Modules.Proxies.Features.v1.Proxies.UnassignProxyTag;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.ListProviderAccounts;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.SyncProviderAccountNow;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
+using FSH.Modules.Proxies.Features.v1.TagCategories.AddTagCategoryValue;
+using FSH.Modules.Proxies.Features.v1.TagCategories.CreateTagCategory;
+using FSH.Modules.Proxies.Features.v1.TagCategories.DeleteTagCategory;
+using FSH.Modules.Proxies.Features.v1.TagCategories.ListTagCategories;
+using FSH.Modules.Proxies.Features.v1.TagCategories.RemoveTagCategoryValue;
+using FSH.Modules.Proxies.Features.v1.TagCategories.UpdateTagCategory;
 using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
 using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
@@ -187,10 +196,20 @@ public sealed class ProxiesModule : IModule
         group.MapDisableProxiesEndpoint();
         group.MapRequestProxiesEndpoint();
         group.MapReportProxyFeedbackEndpoint();
+        group.MapSetProxyTagsEndpoint();
+        group.MapAssignProxyTagEndpoint();
+        group.MapUnassignProxyTagEndpoint();
 
         group.MapCreateTagEndpoint();
         group.MapDeleteTagEndpoint();
         group.MapListTagsEndpoint();
+
+        group.MapCreateTagCategoryEndpoint();
+        group.MapUpdateTagCategoryEndpoint();
+        group.MapDeleteTagCategoryEndpoint();
+        group.MapAddTagCategoryValueEndpoint();
+        group.MapRemoveTagCategoryValueEndpoint();
+        group.MapListTagCategoriesEndpoint();
 
         group.MapCreatePolicyProfileEndpoint();
         group.MapUpdatePolicyProfileEndpoint();

@@ -49,6 +49,13 @@ builder.ConfigureContainer(new DefaultServiceProviderFactory(
 builder.Configuration.AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true);
 builder.Configuration.AddJsonFile(Path.Combine(AppContext.BaseDirectory, $"appsettings.{builder.Environment.EnvironmentName}.json"), optional: true);
 
+// Dev-only, never-committed local secrets (`dotnet user-secrets`) — lets `ProxiesDbInitializer` seed
+// real provider accounts (BrightData/WebShare) without ever putting credentials in source control.
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddUserSecrets<Program>(optional: true);
+}
+
 // Re-add environment variables and command line args so they maintain priority over the manually added JSON files.
 builder.Configuration.AddEnvironmentVariables();
 builder.Configuration.AddCommandLine(args);

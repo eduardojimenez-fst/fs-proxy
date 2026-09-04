@@ -26,6 +26,7 @@ public sealed class ProxiesDbContext : BaseDbContext
     public DbSet<HealthCheckTarget> HealthCheckTargets => Set<HealthCheckTarget>();
     public DbSet<ProxyUsageEvent> ProxyUsageEvents => Set<ProxyUsageEvent>();
     public DbSet<ApiClient> ApiClients => Set<ApiClient>();
+    public DbSet<TagCategory> TagCategories => Set<TagCategory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Globe, RefreshCw } from "lucide-react";
+import { Globe, RefreshCw, Tag as TagIcon, X } from "lucide-react";
 import { EntityPageHeader, ErrorBand, LoadingRow, Pagination } from "@/components/list";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ApiRequestError } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
+import { countryFlag } from "@/lib/country-flag";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
+import { ProxyTagsDialog } from "@/components/proxies/proxy-tags-dialog";
+import { BulkTagDialog } from "@/components/proxies/bulk-tag-dialog";
 import {
   disableProxies,
   enableProxies,
@@ -20,6 +24,7 @@ import {
   type SetProxiesStatusInput,
 } from "@/api/proxies";
 import { listProviderAccounts } from "@/api/provider-accounts";
+import { listTagCategories } from "@/api/tag-categories";
 
 const PAGE_SIZE = 20;
 
@@ -71,27 +76,37 @@ export function ProxiesListPage() {
   const queryClient = useQueryClient();
 
   const [pageNumber, setPageNumber] = useState(1);
-  const [tagsInput, setTagsInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [filterCategory, setFilterCategory] = useState("");
+  const [filterValue, setFilterValue] = useState("");
+  const [customTagInput, setCustomTagInput] = useState("");
   const [status, setStatus] = useState<ProxyStatus | "">("");
   const [providerAccountId, setProviderAccountId] = useState("");
   const [countryInput, setCountryInput] = useState("");
   const [country, setCountry] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tagsDialogProxy, setTagsDialogProxy] = useState<ProxyDto | null>(null);
+  const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
 
-  // Debounce the free-text tags input → the committed `tags` filter.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setTags(
-        tagsInput
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      );
-      setPageNumber(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [tagsInput]);
+  const tagCategoriesQuery = useQuery({
+    queryKey: ["proxies", "tag-categories"],
+    queryFn: () => listTagCategories(),
+    staleTime: 60_000,
+  });
+  const tagCategories = tagCategoriesQuery.data ?? [];
+  const filterCategoryValues = tagCategories.find((c) => c.name === filterCategory)?.values ?? [];
+
+  function addTagFilter(tag: string) {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    setTags((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setPageNumber(1);
+  }
+
+  function removeTagFilter(tag: string) {
+    setTags((prev) => prev.filter((t) => t !== tag));
+    setPageNumber(1);
+  }
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -107,6 +122,8 @@ export function ProxiesListPage() {
   }, [status, providerAccountId]);
 
   const canUpdate = user?.permissions.includes(ProxiesPermissions.ManualProxies.Update) ?? false;
+  const canManageTags = user?.permissions.includes(ProxiesPermissions.Tags.Update) ?? false;
+  const canSelect = canUpdate || canManageTags;
 
   const providerAccountsQuery = useQuery({
     queryKey: ["proxies", "provider-accounts", "all"],
@@ -179,7 +196,10 @@ export function ProxiesListPage() {
   const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "" || country !== "";
 
   const clearFilters = () => {
-    setTagsInput("");
+    setTags([]);
+    setFilterCategory("");
+    setFilterValue("");
+    setCustomTagInput("");
     setStatus("");
     setProviderAccountId("");
     setCountryInput("");
@@ -218,20 +238,77 @@ export function ProxiesListPage() {
       {/* Filter row */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label
-            htmlFor="proxies-tags"
-            className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
-          >
+          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
             Tags
-          </label>
-          <input
-            id="proxies-tags"
-            type="search"
-            placeholder="pais:cl, funcionalidad:licitaciones"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-            className="h-9 w-72 max-w-full rounded-md border border-[var(--color-input)] bg-transparent px-3 font-mono text-[12.5px] outline-none transition-colors placeholder:text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)] focus-visible:border-[var(--color-ring)] focus-visible:ring-[3px] focus-visible:ring-[oklch(from_var(--color-ring)_l_c_h_/_0.5)]"
-          />
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div data-testid="proxies-tag-category-select">
+              <Select
+                value={filterCategory}
+                onChange={(v) => {
+                  setFilterCategory(v);
+                  setFilterValue("");
+                }}
+                options={tagCategories.map((c) => ({ value: c.name, label: c.name }))}
+                placeholder="Category…"
+                minWidth="9rem"
+              />
+            </div>
+            <div data-testid="proxies-tag-value-select">
+              <Select
+                value={filterValue}
+                onChange={setFilterValue}
+                options={filterCategoryValues.map((v) => ({
+                  value: v,
+                  label: filterCategory.toLowerCase() === "country" ? [countryFlag(v), v].filter(Boolean).join(" ") : v,
+                }))}
+                placeholder="Value…"
+                minWidth="9rem"
+                disabled={!filterCategory}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Add category tag filter"
+              disabled={!filterCategory || !filterValue}
+              onClick={() => {
+                addTagFilter(`${filterCategory}:${filterValue}`);
+                setFilterValue("");
+              }}
+            >
+              + Add
+            </Button>
+            <Input
+              type="search"
+              aria-label="Custom tag filter"
+              placeholder="or custom tag"
+              value={customTagInput}
+              onChange={(e) => setCustomTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTagFilter(customTagInput);
+                  setCustomTagInput("");
+                }
+              }}
+              className="h-9 w-32"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Add custom tag filter"
+              disabled={!customTagInput.trim()}
+              onClick={() => {
+                addTagFilter(customTagInput);
+                setCustomTagInput("");
+              }}
+            >
+              + Add
+            </Button>
+          </div>
         </div>
 
         <div className="flex flex-col gap-1">
@@ -275,26 +352,48 @@ export function ProxiesListPage() {
           </Button>
         )}
 
-        {canUpdate && selected.size > 0 && (
+        {canSelect && selected.size > 0 && (
           <div className="ml-auto flex gap-2">
-            <Button
-              size="sm"
-              disabled={mutationBusy}
-              onClick={() => enableMutation.mutate({ proxyIds: [...selected] })}
-            >
-              Enable selected ({selected.size})
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={mutationBusy}
-              onClick={() => disableMutation.mutate({ proxyIds: [...selected] })}
-            >
-              Disable selected
-            </Button>
+            {canUpdate && (
+              <>
+                <Button
+                  size="sm"
+                  disabled={mutationBusy}
+                  onClick={() => enableMutation.mutate({ proxyIds: [...selected] })}
+                >
+                  Enable selected ({selected.size})
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={mutationBusy}
+                  onClick={() => disableMutation.mutate({ proxyIds: [...selected] })}
+                >
+                  Disable selected
+                </Button>
+              </>
+            )}
+            {canManageTags && (
+              <Button variant="outline" size="sm" onClick={() => setBulkTagDialogOpen(true)}>
+                Manage tags
+              </Button>
+            )}
           </div>
         )}
       </div>
+
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {tags.map((tag) => (
+            <Badge key={tag} variant="muted" className="gap-1 font-mono text-[11px]">
+              {tag}
+              <button type="button" aria-label={`Remove tag filter ${tag}`} onClick={() => removeTagFilter(tag)}>
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
 
       {proxiesQuery.isError && <ErrorBand message={describeError(proxiesQuery.error)} />}
 
@@ -330,10 +429,13 @@ export function ProxiesListPage() {
                 proxy={proxy}
                 selected={selected.has(proxy.id)}
                 canUpdate={canUpdate}
+                canManageTags={canManageTags}
+                canSelect={canSelect}
                 busy={mutationBusy}
                 onToggleSelected={() => toggleSelected(proxy.id)}
                 onEnable={() => enableMutation.mutate({ proxyIds: [proxy.id] })}
                 onDisable={() => disableMutation.mutate({ proxyIds: [proxy.id] })}
+                onEditTags={() => setTagsDialogProxy(proxy)}
               />
             ))}
           </div>
@@ -346,7 +448,7 @@ export function ProxiesListPage() {
                 DESKTOP_COLS,
               )}
             >
-              {canUpdate ? (
+              {canSelect ? (
                 <input
                   type="checkbox"
                   checked={allOnPageSelected}
@@ -378,10 +480,13 @@ export function ProxiesListPage() {
                   proxy={proxy}
                   selected={selected.has(proxy.id)}
                   canUpdate={canUpdate}
+                  canManageTags={canManageTags}
+                  canSelect={canSelect}
                   busy={mutationBusy}
                   onToggleSelected={() => toggleSelected(proxy.id)}
                   onEnable={() => enableMutation.mutate({ proxyIds: [proxy.id] })}
                   onDisable={() => disableMutation.mutate({ proxyIds: [proxy.id] })}
+                  onEditTags={() => setTagsDialogProxy(proxy)}
                 />
               ))}
             </ol>
@@ -403,6 +508,9 @@ export function ProxiesListPage() {
           noun="proxies"
         />
       )}
+
+      <ProxyTagsDialog open={tagsDialogProxy !== null} proxy={tagsDialogProxy} onClose={() => setTagsDialogProxy(null)} />
+      <BulkTagDialog open={bulkTagDialogOpen} proxyIds={[...selected]} onClose={() => setBulkTagDialogOpen(false)} />
     </div>
   );
 }
@@ -413,23 +521,29 @@ function ProxyDesktopRow({
   proxy,
   selected,
   canUpdate,
+  canManageTags,
+  canSelect,
   busy,
   onToggleSelected,
   onEnable,
   onDisable,
+  onEditTags,
 }: {
   proxy: ProxyDto;
   selected: boolean;
   canUpdate: boolean;
+  canManageTags: boolean;
+  canSelect: boolean;
   busy: boolean;
   onToggleSelected: () => void;
   onEnable: () => void;
   onDisable: () => void;
+  onEditTags: () => void;
 }) {
   return (
     <li className="list-none">
       <div className={cn("grid items-center gap-3 px-4 py-3", DESKTOP_COLS)}>
-        {canUpdate ? (
+        {canSelect ? (
           <input
             type="checkbox"
             checked={selected}
@@ -460,10 +574,24 @@ function ProxyDesktopRow({
             {proxy.providerGrouping ? `${proxy.providerType} · ${proxy.providerGrouping}` : proxy.providerType}
           </span>
         </div>
-        <span className="truncate text-[12px] text-[var(--color-muted-foreground)]">
-          {proxy.tags.length > 0 ? proxy.tags.join(", ") : "—"}
-        </span>
-        <div className="flex items-center justify-end">
+        <div className="flex min-w-0 flex-wrap gap-1">
+          {proxy.tags.length > 0 ? (
+            proxy.tags.map((tag) => (
+              <Badge key={tag} variant="muted" className="font-mono text-[10.5px]">
+                {tag}
+              </Badge>
+            ))
+          ) : (
+            <span className="text-[12px] text-[var(--color-muted-foreground)]">—</span>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-1">
+          {canManageTags ? (
+            <Button variant="ghost" size="sm" onClick={onEditTags}>
+              <TagIcon className="h-3.5 w-3.5" />
+              <span className="sr-only sm:not-sr-only sm:ml-1">Tags</span>
+            </Button>
+          ) : null}
           {canUpdate ? (
             proxy.status === "Active" ? (
               <Button variant="outline" size="sm" disabled={busy} onClick={onDisable}>
@@ -487,24 +615,30 @@ function ProxyMobileCard({
   proxy,
   selected,
   canUpdate,
+  canManageTags,
+  canSelect,
   busy,
   onToggleSelected,
   onEnable,
   onDisable,
+  onEditTags,
 }: {
   proxy: ProxyDto;
   selected: boolean;
   canUpdate: boolean;
+  canManageTags: boolean;
+  canSelect: boolean;
   busy: boolean;
   onToggleSelected: () => void;
   onEnable: () => void;
   onDisable: () => void;
+  onEditTags: () => void;
 }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-xs">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-2.5">
-          {canUpdate && (
+          {canSelect && (
             <input
               type="checkbox"
               checked={selected}
@@ -528,20 +662,34 @@ function ProxyMobileCard({
           {proxy.status}
         </Badge>
       </div>
-      <p className="mt-2 truncate text-[11px] text-[var(--color-muted-foreground)]">
-        {proxy.tags.length > 0 ? proxy.tags.join(", ") : "No tags"}
-      </p>
-      {canUpdate && (
-        <div className="mt-3">
-          {proxy.status === "Active" ? (
-            <Button variant="outline" size="sm" disabled={busy} onClick={onDisable} className="w-full">
-              Disable
-            </Button>
-          ) : (
-            <Button size="sm" disabled={busy} onClick={onEnable} className="w-full">
-              Enable
+      <div className="mt-2 flex flex-wrap gap-1">
+        {proxy.tags.length > 0 ? (
+          proxy.tags.map((tag) => (
+            <Badge key={tag} variant="muted" className="font-mono text-[10.5px]">
+              {tag}
+            </Badge>
+          ))
+        ) : (
+          <span className="text-[11px] text-[var(--color-muted-foreground)]">No tags</span>
+        )}
+      </div>
+      {(canUpdate || canManageTags) && (
+        <div className="mt-3 flex gap-2">
+          {canManageTags && (
+            <Button variant="outline" size="sm" onClick={onEditTags} className="flex-1">
+              <TagIcon className="mr-1 h-3.5 w-3.5" /> Tags
             </Button>
           )}
+          {canUpdate &&
+            (proxy.status === "Active" ? (
+              <Button variant="outline" size="sm" disabled={busy} onClick={onDisable} className="flex-1">
+                Disable
+              </Button>
+            ) : (
+              <Button size="sm" disabled={busy} onClick={onEnable} className="flex-1">
+                Enable
+              </Button>
+            ))}
         </div>
       )}
     </div>

@@ -35,8 +35,9 @@ export async function updateProviderAccount(input: UpdateProviderAccountInput): 
   });
 }
 
-export async function deleteProviderAccount(id: string): Promise<void> {
-  await apiFetch<void>(`${BASE}/${id}`, { method: "DELETE" });
+export async function deleteProviderAccount(id: string, options: { force?: boolean } = {}): Promise<void> {
+  const query = options.force ? "?force=true" : "";
+  await apiFetch<void>(`${BASE}/${id}${query}`, { method: "DELETE" });
 }
 
 /** Triggers an immediate sync; returns the number of proxies synced. */

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -20,6 +20,7 @@
          operator messages are literal strings. CA1303 (use resource tables
          for user-facing strings) is the wrong rule for this project. -->
     <NoWarn>$(NoWarn);CA1303</NoWarn>
+    <UserSecretsId>ae922caa-d0b7-40ca-8879-0be68b546e89</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -55,12 +56,8 @@
   <!-- Share configuration with the API so connection strings + tenant options
        stay in lock-step. Production deployments override via env vars. -->
   <ItemGroup>
-    <None Include="..\FS.Proxy.Api\appsettings.json"
-          Link="appsettings.json"
-          CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\FS.Proxy.Api\appsettings.Development.json"
-          Link="appsettings.Development.json"
-          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\FS.Proxy.Api\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\FS.Proxy.Api\appsettings.Development.json" Link="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

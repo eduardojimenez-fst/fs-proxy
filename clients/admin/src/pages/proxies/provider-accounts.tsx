@@ -6,10 +6,12 @@ import { EntityPageHeader, ErrorBand, LoadingRow, Pagination } from "@/component
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ApiRequestError } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
+import { listProxies } from "@/api/proxies";
 import {
   deleteProviderAccount,
   listProviderAccounts,
@@ -33,6 +35,11 @@ export function ProviderAccountsListPage() {
   const [pageNumber, setPageNumber] = useState(1);
   const [dialogState, setDialogState] = useState<{ open: boolean; account?: ProviderAccountDto }>({ open: false });
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deleteState, setDeleteState] = useState<{
+    open: boolean;
+    account?: ProviderAccountDto;
+    proxyCount: number | null;
+  }>({ open: false, proxyCount: null });
 
   const canCreate = user?.permissions.includes(ProxiesPermissions.ProviderAccounts.Create) ?? false;
   const canUpdate = user?.permissions.includes(ProxiesPermissions.ProviderAccounts.Update) ?? false;
@@ -57,15 +64,38 @@ export function ProviderAccountsListPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteProviderAccount(id),
-    onMutate: (id) => setBusyId(id),
+    mutationFn: (input: { id: string; force: boolean }) => deleteProviderAccount(input.id, { force: input.force }),
+    onMutate: (input) => setBusyId(input.id),
     onSuccess: () => {
       toast.success("Provider account deleted");
       void queryClient.invalidateQueries({ queryKey: ["proxies", "provider-accounts"] });
+      void queryClient.invalidateQueries({ queryKey: ["proxies", "list"] });
+      setDeleteState({ open: false, proxyCount: null });
     },
     onError: (err) => toast.error("Delete failed", { description: describeError(err) }),
     onSettled: () => setBusyId(null),
   });
+
+  async function startDelete(account: ProviderAccountDto) {
+    setDeleteState({ open: true, account, proxyCount: null });
+    try {
+      const result = await listProxies({ providerAccountId: account.id, pageSize: 1 });
+      setDeleteState((prev) => (prev.account?.id === account.id ? { ...prev, proxyCount: result.totalCount } : prev));
+    } catch {
+      // Best-effort — if the count fails to load, the dialog falls back to a generic warning
+      // (see deleteDescription below) rather than blocking the delete entirely.
+      setDeleteState((prev) => (prev.account?.id === account.id ? { ...prev, proxyCount: -1 } : prev));
+    }
+  }
+
+  const deleteDescription =
+    deleteState.proxyCount === null
+      ? "Checking for synced proxies…"
+      : deleteState.proxyCount === -1
+        ? `Delete provider account "${deleteState.account?.name}"? Could not check for synced proxies — if any exist, they will also be permanently deleted.`
+        : deleteState.proxyCount === 0
+          ? `Delete provider account "${deleteState.account?.name}"? It has no synced proxies.`
+          : `Delete provider account "${deleteState.account?.name}"? This will permanently delete ${deleteState.proxyCount} synced ${deleteState.proxyCount === 1 ? "proxy" : "proxies"} and their tag assignments. This cannot be undone.`;
 
   const data = accountsQuery.data;
   const items: ProviderAccountDto[] = data?.items ?? [];
@@ -127,15 +157,7 @@ export function ProviderAccountsListPage() {
               canDelete={canDelete}
               onSync={() => syncMutation.mutate(account.id)}
               onEdit={() => setDialogState({ open: true, account })}
-              onDelete={() => {
-                if (
-                  window.confirm(
-                    `Delete provider account "${account.name}"? Its already-synced proxies remain but stop refreshing.`,
-                  )
-                ) {
-                  deleteMutation.mutate(account.id);
-                }
-              }}
+              onDelete={() => void startDelete(account)}
             />
           ))}
         </ol>
@@ -160,6 +182,21 @@ export function ProviderAccountsListPage() {
         open={dialogState.open}
         account={dialogState.account}
         onClose={() => setDialogState({ open: false })}
+      />
+
+      <ConfirmDialog
+        open={deleteState.open}
+        onOpenChange={(open) => !open && setDeleteState({ open: false, proxyCount: null })}
+        title="Delete provider account"
+        description={deleteDescription}
+        confirmLabel="Delete"
+        destructive
+        pending={deleteState.proxyCount === null || (deleteState.account !== undefined && busyId === deleteState.account.id)}
+        onConfirm={() => {
+          if (deleteState.account && deleteState.proxyCount !== null) {
+            deleteMutation.mutate({ id: deleteState.account.id, force: deleteState.proxyCount !== 0 });
+          }
+        }}
       />
     </div>
   );
