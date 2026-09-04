@@ -24,11 +24,14 @@ using FSH.Modules.Proxies.Features.v1.Policies.DeletePolicyProfile;
 using FSH.Modules.Proxies.Features.v1.Policies.ListPolicyProfiles;
 using FSH.Modules.Proxies.Features.v1.Policies.UnassignPolicyFromTag;
 using FSH.Modules.Proxies.Features.v1.Policies.UpdatePolicyProfile;
+using FSH.Modules.Proxies.Features.v1.Proxies.AssignProxyTag;
 using FSH.Modules.Proxies.Features.v1.Proxies.DisableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.EnableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ListProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ReportProxyFeedback;
 using FSH.Modules.Proxies.Features.v1.Proxies.RequestProxies;
+using FSH.Modules.Proxies.Features.v1.Proxies.SetProxyTags;
+using FSH.Modules.Proxies.Features.v1.Proxies.UnassignProxyTag;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
@@ -193,6 +196,9 @@ public sealed class ProxiesModule : IModule
         group.MapDisableProxiesEndpoint();
         group.MapRequestProxiesEndpoint();
         group.MapReportProxyFeedbackEndpoint();
+        group.MapSetProxyTagsEndpoint();
+        group.MapAssignProxyTagEndpoint();
+        group.MapUnassignProxyTagEndpoint();
 
         group.MapCreateTagEndpoint();
         group.MapDeleteTagEndpoint();
