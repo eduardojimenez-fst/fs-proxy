@@ -129,4 +129,38 @@ public sealed class WebShareAdapterTests
     [Fact]
     public void SupportsRenew_Should_BeFalse() =>
         new WebShareAdapter(Substitute.For<IHttpClientFactory>()).SupportsRenew.ShouldBeFalse();
+
+    // The tests above build every fixture from the same C# response record + [JsonPropertyName]
+    // attributes the adapter deserializes with, so a typo in a JSON property name (e.g.
+    // "proxy_address" or "country_code") would round-trip symmetrically and still pass. This uses
+    // a raw JSON string literal matching the real, empirically-captured shape from the design spec
+    // to actually exercise the property-name contract.
+    [Fact]
+    public async Task SyncProxiesAsync_Should_ParseRealProxyListJsonShape()
+    {
+        var responseJson = """
+            {
+              "count": 1, "next": null, "previous": null,
+              "results": [{
+                "id": "d-17151685319", "username": "jgwcycpg", "password": "ytz1gdtc8ymc",
+                "proxy_address": "64.137.37.190", "port": 6780, "valid": true,
+                "country_code": "CL", "city_name": "Santiago", "asn_name": "Latitude.Sh",
+                "asn_number": 396356, "high_country_confidence": true
+              }]
+            }
+            """;
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, System.Text.Encoding.UTF8, "application/json")
+        });
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"ApiKey\":\"key-123\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        var proxy = result.Proxies.Single();
+        proxy.Host.ShouldBe("64.137.37.190");
+        proxy.Port.ShouldBe(6780);
+        proxy.Country.ShouldBe("CL");
+    }
 }
