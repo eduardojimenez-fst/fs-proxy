@@ -55,4 +55,25 @@ test.describe("bulk tag editor", () => {
 
     await expect.poll(() => assignBody).toEqual({ proxyIds: ["11111111-1111-1111-1111-111111111111"], tagName: "pais:cl" });
   });
+
+  test("removes a category-selected tag from every checked proxy", async ({ page }) => {
+    let unassignBody: unknown;
+    await page.route("**/api/v1/proxies/tags/unassign", async (route) => {
+      unassignBody = route.request().postDataJSON();
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(1) });
+    });
+
+    await page.goto("/proxies");
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("checkbox", { name: /Select 10.0.0.5:3128/ }).check();
+    await page.getByRole("button", { name: "Manage tags" }).click();
+    // The Select is a Radix DropdownMenu-based combobox, not a native <select>.
+    await page.getByTestId("bulk-remove-category-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: "pais", exact: true }).click();
+    await page.getByTestId("bulk-remove-value-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: "cl", exact: true }).click();
+    await page.getByRole("button", { name: "Remove from 1 selected" }).click();
+
+    await expect.poll(() => unassignBody).toEqual({ proxyIds: ["11111111-1111-1111-1111-111111111111"], tagName: "pais:cl" });
+  });
 });

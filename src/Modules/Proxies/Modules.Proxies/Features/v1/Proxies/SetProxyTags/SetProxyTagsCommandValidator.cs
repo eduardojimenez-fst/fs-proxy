@@ -9,5 +9,6 @@ public sealed class SetProxyTagsCommandValidator : AbstractValidator<SetProxyTag
     {
         RuleFor(x => x.ProxyId).NotEmpty();
         RuleFor(x => x.TagNames).NotNull();
+        RuleForEach(x => x.TagNames).NotEmpty().MaximumLength(128);
     }
 }

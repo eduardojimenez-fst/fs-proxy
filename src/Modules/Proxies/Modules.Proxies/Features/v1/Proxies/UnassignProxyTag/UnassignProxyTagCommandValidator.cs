@@ -8,6 +8,6 @@ public sealed class UnassignProxyTagCommandValidator : AbstractValidator<Unassig
     public UnassignProxyTagCommandValidator()
     {
         RuleFor(x => x.ProxyIds).NotEmpty();
-        RuleFor(x => x.TagName).NotEmpty().MaximumLength(255);
+        RuleFor(x => x.TagName).NotEmpty().MaximumLength(128);
     }
 }
