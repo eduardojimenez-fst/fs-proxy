@@ -24,14 +24,26 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
     public bool SupportsSync => true;
     public bool SupportsRenew => false;
 
+    private static readonly JsonSerializerOptions CredentialsJsonOptions = new(JsonSerializerDefaults.Web);
+
     public async Task<ProviderSyncResult> SyncProxiesAsync(ProviderAccount account, string decryptedCredentials, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(account);
 
+        // Malformed stored credentials (e.g. the admin UI's own placeholder pasted verbatim, or a
+        // JSON body missing a required key) must surface as a normal sync failure, not an unhandled
+        // exception: only the Failed path reaches ProviderAccountSyncService's
+        // RecordSyncResult(success: false, ...) and so increments ConsecutiveSyncFailures towards
+        // the admin notification threshold, matching WebShareAdapter's precedent. Deserialization is
+        // case-insensitive (JsonSerializerDefaults.Web) because the admin UI's Provider Account
+        // dialog shows a camelCase example ({"apiToken":...}), which would otherwise silently
+        // produce an all-null/all-default record under the framework's default case-sensitive
+        // matching; the blank-field guard below is defense-in-depth against ANY malformed or
+        // incomplete credentials JSON, camelCase or not.
         BrightDataCredentials? credentials;
         try
         {
-            credentials = JsonSerializer.Deserialize<BrightDataCredentials>(decryptedCredentials);
+            credentials = JsonSerializer.Deserialize<BrightDataCredentials>(decryptedCredentials, CredentialsJsonOptions);
         }
         catch (JsonException ex)
         {
@@ -41,6 +53,12 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
         if (credentials is null)
         {
             return ProviderSyncResult.Failed("Invalid credentials JSON: BrightData credentials could not be parsed.");
+        }
+
+        if (string.IsNullOrWhiteSpace(credentials.ApiToken) || string.IsNullOrWhiteSpace(credentials.Zone) ||
+            string.IsNullOrWhiteSpace(credentials.CustomerId) || credentials.GatewayPort <= 0)
+        {
+            return ProviderSyncResult.Failed("Invalid credentials JSON: BrightData credentials are missing required fields (apiToken, zone, customerId, gatewayPort).");
         }
 
         using var client = httpClientFactory.CreateClient(ClientName);
@@ -53,9 +71,18 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
             return ProviderSyncResult.Failed($"BrightData returned {(int)zoneResponse.StatusCode} {zoneResponse.ReasonPhrase} for zone config.");
         }
 
-        var zoneConfig = await zoneResponse.Content.ReadFromJsonAsync<BrightDataZoneConfigResponse>(cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("BrightData returned an empty zone config response.");
-        if (zoneConfig.Password.Count == 0)
+        BrightDataZoneConfigResponse? zoneConfig;
+        try
+        {
+            zoneConfig = await zoneResponse.Content.ReadFromJsonAsync<BrightDataZoneConfigResponse>(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("BrightData returned an empty zone config response.");
+        }
+        catch (JsonException ex)
+        {
+            return ProviderSyncResult.Failed($"BrightData returned an unparseable zone config response: {ex.Message}");
+        }
+
+        if (zoneConfig.Password is not { Count: > 0 })
         {
             return ProviderSyncResult.Failed("BrightData zone config did not include a password.");
         }
@@ -67,7 +94,7 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
 
         if (ipsResponse.StatusCode == HttpStatusCode.BadRequest)
         {
-            var poolCountry = SingleCountryOrNull(zoneConfig.Plan.DefaultCountry ?? zoneConfig.Plan.Country);
+            var poolCountry = TruncateToNullIfTooLong(SingleCountryOrNull(zoneConfig.Plan?.DefaultCountry ?? zoneConfig.Plan?.Country));
             var poolUsername = $"brd-customer-{credentials.CustomerId}-zone-{credentials.Zone}";
             return ProviderSyncResult.Ok([
                 new ProviderProxyRecord($"{credentials.Zone}:pool", credentials.GatewayHost, credentials.GatewayPort, ProxyProtocol.Http,
@@ -80,8 +107,16 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
             return ProviderSyncResult.Failed($"BrightData returned {(int)ipsResponse.StatusCode} {ipsResponse.ReasonPhrase} for zone IPs.");
         }
 
-        var ipsPayload = await ipsResponse.Content.ReadFromJsonAsync<BrightDataZoneIpsResponse>(cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("BrightData returned an empty zone IPs response.");
+        BrightDataZoneIpsResponse? ipsPayload;
+        try
+        {
+            ipsPayload = await ipsResponse.Content.ReadFromJsonAsync<BrightDataZoneIpsResponse>(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("BrightData returned an empty zone IPs response.");
+        }
+        catch (JsonException ex)
+        {
+            return ProviderSyncResult.Failed($"BrightData returned an unparseable zone IPs response: {ex.Message}");
+        }
 
         var proxies = ipsPayload.Ips
             .Select(ip => new ProviderProxyRecord(
@@ -92,7 +127,7 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
                 Username: $"brd-customer-{credentials.CustomerId}-zone-{credentials.Zone}-ip-{ip.Ip}",
                 Password: password,
                 IsActive: true,
-                Country: ip.Maxmind,
+                Country: TruncateToNullIfTooLong(ip.Maxmind),
                 ProviderGrouping: credentials.Zone))
             .ToList();
 
@@ -106,6 +141,17 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
     /// </summary>
     private static string? SingleCountryOrNull(string? country) =>
         string.IsNullOrWhiteSpace(country) || country.Contains(' ', StringComparison.Ordinal) ? null : country;
+
+    /// <summary>
+    /// <see cref="Domain.Proxy.Country"/> is a <c>varchar(10)</c> column. A provider-reported
+    /// country value that's longer than that (an unexpected delimiter, a full name instead of an
+    /// ISO2 code, etc.) would pass every InMemory-backed test and then fail with a Postgres
+    /// 22001 "value too long" error on SaveChanges in production. Preferring null over truncating
+    /// or throwing avoids both silently corrupting the value and crashing a sync over a field
+    /// that's informational-only.
+    /// </summary>
+    private static string? TruncateToNullIfTooLong(string? country) =>
+        country is { Length: > 10 } ? null : country;
 
     public Task<ProviderRenewResult> RenewProxyAsync(ProviderAccount account, string decryptedCredentials, Proxy proxy, CancellationToken cancellationToken) =>
         Task.FromResult(ProviderRenewResult.Unsupported());
