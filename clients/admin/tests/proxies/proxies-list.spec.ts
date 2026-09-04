@@ -7,7 +7,7 @@ const PROXY_CL = {
   host: "10.0.0.5",
   port: 3128,
   protocol: "Http",
-  country: "CL",
+  geolocation: "CL",
   status: "Active",
   providerAccountId: "acc-1",
   providerAccountName: "Manual",
@@ -117,8 +117,9 @@ test.describe("proxies list", () => {
 
     await expect(page.getByText("legacy-note", { exact: true })).toBeVisible();
     await expect.poll(() => new URL(lastUrl).searchParams.getAll("tags")).toEqual(["legacy-note"]);
-    
-  test("shows the provider-reported country next to the protocol", async ({ page }) => {
+  });
+
+  test("shows the provider-reported geolocation next to the protocol", async ({ page }) => {
     await page.route("**/api/v1/proxies/?*", async (route) => {
       await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([PROXY_CL])) });
     });

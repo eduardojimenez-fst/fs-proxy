@@ -40,31 +40,31 @@ public sealed class ProxyTests
     }
 
     [Fact]
-    public void Create_Should_SetCountryAndProviderGrouping_When_Provided()
+    public void Create_Should_SetGeolocationAndProviderGrouping_When_Provided()
     {
         var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, "user", "protected-pw", "ext-1", "cl", "zone1new");
 
-        proxy.Country.ShouldBe("cl");
+        proxy.Geolocation.ShouldBe("cl");
         proxy.ProviderGrouping.ShouldBe("zone1new");
     }
 
     [Fact]
-    public void Create_Should_DefaultCountryAndProviderGrouping_ToNull_When_Omitted()
+    public void Create_Should_DefaultGeolocationAndProviderGrouping_ToNull_When_Omitted()
     {
         var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, null);
 
-        proxy.Country.ShouldBeNull();
+        proxy.Geolocation.ShouldBeNull();
         proxy.ProviderGrouping.ShouldBeNull();
     }
 
     [Fact]
-    public void UpdateConnection_Should_UpdateCountryAndProviderGrouping()
+    public void UpdateConnection_Should_UpdateGeolocationAndProviderGrouping()
     {
         var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, null, "us", "old-zone");
 
         proxy.UpdateConnection("5.6.7.8", 9090, ProxyProtocol.Http, "u2", "p2", "ar", "new-zone");
 
-        proxy.Country.ShouldBe("ar");
+        proxy.Geolocation.ShouldBe("ar");
         proxy.ProviderGrouping.ShouldBe("new-zone");
     }
 }

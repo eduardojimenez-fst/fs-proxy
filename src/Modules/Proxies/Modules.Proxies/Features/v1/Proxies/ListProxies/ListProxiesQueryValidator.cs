@@ -9,6 +9,6 @@ public sealed class ListProxiesQueryValidator : AbstractValidator<ListProxiesQue
     {
         RuleFor(x => x.PageNumber).GreaterThanOrEqualTo(1);
         RuleFor(x => x.PageSize).InclusiveBetween(1, 200);
-        RuleFor(x => x.Country).MaximumLength(10).When(x => x.Country is not null);
+        RuleFor(x => x.Geolocation).MaximumLength(10).When(x => x.Geolocation is not null);
     }
 }

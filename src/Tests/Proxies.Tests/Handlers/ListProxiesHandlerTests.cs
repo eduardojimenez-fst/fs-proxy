@@ -55,7 +55,7 @@ public sealed class ListProxiesHandlerTests
     }
 
     [Fact]
-    public async Task Handle_Should_FilterByCountry_CaseInsensitively()
+    public async Task Handle_Should_FilterByGeolocation_CaseInsensitively()
     {
         await using var db = CreateDb();
         var account = ProviderAccount.Create("Manual", ProxyProviderType.Manual, "protected:x");
@@ -69,6 +69,6 @@ public sealed class ListProxiesHandlerTests
         var result = await sut.Handle(new ListProxiesQuery(null, null, null, "CL"), CancellationToken.None);
 
         result.Items.Select(x => x.Id).ShouldBe([chile.Id]);
-        result.Items.Single().Country.ShouldBe("cl");
+        result.Items.Single().Geolocation.ShouldBe("cl");
     }
 }

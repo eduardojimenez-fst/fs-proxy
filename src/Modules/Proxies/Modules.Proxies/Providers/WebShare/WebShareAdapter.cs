@@ -75,7 +75,7 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
             proxies.AddRange(payload.Results
                 .Where(r => r.Valid)
                 .Select(r => new ProviderProxyRecord(r.Id, r.ProxyAddress, r.Port, ProxyProtocol.Http, r.Username, r.Password,
-                    IsActive: true, Country: r.CountryCode, ProviderGrouping: "Proxy List")));
+                    IsActive: true, Geolocation: r.CountryCode, ProviderGrouping: "Proxy List")));
 
             nextUrl = payload.Next;
         }
