@@ -78,12 +78,15 @@ public sealed class ProviderAccountSyncService(
         {
             if (byExternalId.TryGetValue(record.ExternalId, out var existing))
             {
-                existing.UpdateConnection(record.Host, record.Port, record.Protocol, record.Username, record.Password is null ? null : protector.Protect(record.Password));
+                existing.UpdateConnection(record.Host, record.Port, record.Protocol, record.Username,
+                    record.Password is null ? null : protector.Protect(record.Password),
+                    record.Country, record.ProviderGrouping);
             }
             else
             {
                 var created = Proxy.Create(providerAccountId, record.Host, record.Port, record.Protocol, record.Username,
-                    record.Password is null ? null : protector.Protect(record.Password), record.ExternalId);
+                    record.Password is null ? null : protector.Protect(record.Password), record.ExternalId,
+                    record.Country, record.ProviderGrouping);
                 dbContext.Proxies.Add(created);
             }
 
