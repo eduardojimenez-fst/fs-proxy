@@ -76,6 +76,6 @@ test.describe("proxies list", () => {
     await page.goto("/proxies");
 
     await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole("listitem").getByText("Http · CL", { exact: true })).toBeVisible();
+    await expect(page.getByRole("listitem").getByText("Http · 🇨🇱 CL", { exact: true })).toBeVisible();
   });
 });
