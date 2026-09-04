@@ -38,4 +38,33 @@ public sealed class ProxyTests
         proxy.Status.ShouldBe(ProxyStatus.Testing);
         proxy.LastRenewedAtUtc.ShouldNotBeNull();
     }
+
+    [Fact]
+    public void Create_Should_SetCountryAndProviderGrouping_When_Provided()
+    {
+        var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, "user", "protected-pw", "ext-1", "cl", "zone1new");
+
+        proxy.Country.ShouldBe("cl");
+        proxy.ProviderGrouping.ShouldBe("zone1new");
+    }
+
+    [Fact]
+    public void Create_Should_DefaultCountryAndProviderGrouping_ToNull_When_Omitted()
+    {
+        var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, null);
+
+        proxy.Country.ShouldBeNull();
+        proxy.ProviderGrouping.ShouldBeNull();
+    }
+
+    [Fact]
+    public void UpdateConnection_Should_UpdateCountryAndProviderGrouping()
+    {
+        var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, null, "us", "old-zone");
+
+        proxy.UpdateConnection("5.6.7.8", 9090, ProxyProtocol.Http, "u2", "p2", "ar", "new-zone");
+
+        proxy.Country.ShouldBe("ar");
+        proxy.ProviderGrouping.ShouldBe("new-zone");
+    }
 }
