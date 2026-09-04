@@ -35,6 +35,12 @@ using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.ListProviderAccounts;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.SyncProviderAccountNow;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
+using FSH.Modules.Proxies.Features.v1.TagCategories.AddTagCategoryValue;
+using FSH.Modules.Proxies.Features.v1.TagCategories.CreateTagCategory;
+using FSH.Modules.Proxies.Features.v1.TagCategories.DeleteTagCategory;
+using FSH.Modules.Proxies.Features.v1.TagCategories.ListTagCategories;
+using FSH.Modules.Proxies.Features.v1.TagCategories.RemoveTagCategoryValue;
+using FSH.Modules.Proxies.Features.v1.TagCategories.UpdateTagCategory;
 using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
 using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
@@ -191,6 +197,13 @@ public sealed class ProxiesModule : IModule
         group.MapCreateTagEndpoint();
         group.MapDeleteTagEndpoint();
         group.MapListTagsEndpoint();
+
+        group.MapCreateTagCategoryEndpoint();
+        group.MapUpdateTagCategoryEndpoint();
+        group.MapDeleteTagCategoryEndpoint();
+        group.MapAddTagCategoryValueEndpoint();
+        group.MapRemoveTagCategoryValueEndpoint();
+        group.MapListTagCategoriesEndpoint();
 
         group.MapCreatePolicyProfileEndpoint();
         group.MapUpdatePolicyProfileEndpoint();
