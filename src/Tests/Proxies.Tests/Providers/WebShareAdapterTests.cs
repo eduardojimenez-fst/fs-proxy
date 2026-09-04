@@ -24,6 +24,18 @@ public sealed class WebShareAdapterTests
         }
     }
 
+    private sealed class SequencedStubHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
+    {
+        private int _index;
+        public List<HttpRequestMessage> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(responses[_index++]);
+        }
+    }
+
     private static (WebShareAdapter Adapter, StubHandler Handler) CreateSut(HttpResponseMessage response)
     {
         var handler = new StubHandler(response);
@@ -31,6 +43,34 @@ public sealed class WebShareAdapterTests
         services.AddHttpClient("ProxyProvider:WebShare").ConfigurePrimaryHttpMessageHandler(() => handler);
         var provider = services.BuildServiceProvider();
         return (new WebShareAdapter(provider.GetRequiredService<IHttpClientFactory>()), handler);
+    }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_AcceptCamelCaseCredentialsJson()
+    {
+        // The admin UI's credentials placeholder shows {"apiKey":"..."} (camelCase) — matching
+        // WebShareCredentials(string ApiKey) requires case-insensitive deserialization, or every
+        // credential pasted via the documented UI silently becomes an empty bearer token and
+        // WebShare returns 401 (confirmed live against a real account).
+        var payload = new WebShareProxyListResponse(0, null, []);
+        var (sut, handler) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(payload) });
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"apiKey\":\"key-123\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        handler.LastRequest!.Headers.Authorization!.ToString().ShouldBe("Token key-123");
+    }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_ReturnFailure_When_ApiKeyIsBlank()
+    {
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK));
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"ApiKey\":\"   \"}", CancellationToken.None);
+
+        result.Success.ShouldBeFalse();
     }
 
     [Fact]
@@ -88,6 +128,67 @@ public sealed class WebShareAdapterTests
     }
 
     [Fact]
+    public async Task SyncProxiesAsync_Should_FollowPagination_And_MapCountryAndProviderGrouping()
+    {
+        var page1 = new WebShareProxyListResponse(2, "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=2&page_size=100",
+            [new WebShareProxyRecord("ext-1", "user", "pass", "1.2.3.4", 8080, true, "CL")]);
+        var page2 = new WebShareProxyListResponse(2, null,
+            [new WebShareProxyRecord("ext-2", "user", "pass", "5.6.7.8", 8081, true, "AR")]);
+        var handler = new SequencedStubHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(page1) },
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(page2) });
+        var services = new ServiceCollection();
+        services.AddHttpClient("ProxyProvider:WebShare").ConfigurePrimaryHttpMessageHandler(() => handler);
+        var provider = services.BuildServiceProvider();
+        var sut = new WebShareAdapter(provider.GetRequiredService<IHttpClientFactory>());
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"ApiKey\":\"key-123\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Proxies.Count.ShouldBe(2);
+        handler.Requests.Count.ShouldBe(2);
+        var first = result.Proxies.Single(p => p.ExternalId == "ext-1");
+        first.Country.ShouldBe("CL");
+        first.ProviderGrouping.ShouldBe("Proxy List");
+        result.Proxies.Single(p => p.ExternalId == "ext-2").Country.ShouldBe("AR");
+    }
+
+    [Fact]
     public void SupportsRenew_Should_BeFalse() =>
         new WebShareAdapter(Substitute.For<IHttpClientFactory>()).SupportsRenew.ShouldBeFalse();
+
+    // The tests above build every fixture from the same C# response record + [JsonPropertyName]
+    // attributes the adapter deserializes with, so a typo in a JSON property name (e.g.
+    // "proxy_address" or "country_code") would round-trip symmetrically and still pass. This uses
+    // a raw JSON string literal matching the real, empirically-captured shape from the design spec
+    // to actually exercise the property-name contract.
+    [Fact]
+    public async Task SyncProxiesAsync_Should_ParseRealProxyListJsonShape()
+    {
+        var responseJson = """
+            {
+              "count": 1, "next": null, "previous": null,
+              "results": [{
+                "id": "d-17151685319", "username": "jgwcycpg", "password": "ytz1gdtc8ymc",
+                "proxy_address": "64.137.37.190", "port": 6780, "valid": true,
+                "country_code": "CL", "city_name": "Santiago", "asn_name": "Latitude.Sh",
+                "asn_number": 396356, "high_country_confidence": true
+              }]
+            }
+            """;
+        var (sut, _) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, System.Text.Encoding.UTF8, "application/json")
+        });
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"ApiKey\":\"key-123\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        var proxy = result.Proxies.Single();
+        proxy.Host.ShouldBe("64.137.37.190");
+        proxy.Port.ShouldBe(6780);
+        proxy.Country.ShouldBe("CL");
+    }
 }

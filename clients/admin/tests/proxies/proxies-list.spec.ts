@@ -7,10 +7,12 @@ const PROXY_CL = {
   host: "10.0.0.5",
   port: 3128,
   protocol: "Http",
+  country: "CL",
   status: "Active",
   providerAccountId: "acc-1",
   providerAccountName: "Manual",
   providerType: "Manual",
+  providerGrouping: null,
   tags: ["pais:cl"],
   createdAtUtc: "2026-01-01T00:00:00Z",
   lastRenewedAtUtc: null,
@@ -74,6 +76,7 @@ test.describe("proxies list", () => {
     await expect.poll(() => disableCalled).toBe(true);
   });
 
+
   test("filters by a catalog category/value pair via the dynamic tag picker", async ({ page }) => {
     let lastUrl = "";
     await page.route("**/api/v1/proxies/?*", async (route) => {
@@ -114,5 +117,16 @@ test.describe("proxies list", () => {
 
     await expect(page.getByText("legacy-note", { exact: true })).toBeVisible();
     await expect.poll(() => new URL(lastUrl).searchParams.getAll("tags")).toEqual(["legacy-note"]);
+    
+  test("shows the provider-reported country next to the protocol", async ({ page }) => {
+    await page.route("**/api/v1/proxies/?*", async (route) => {
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([PROXY_CL])) });
+    });
+
+    await page.goto("/proxies");
+
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("listitem").getByText("Http · 🇨🇱 CL", { exact: true })).toBeVisible();
+
   });
 });

@@ -53,7 +53,8 @@ public sealed class ProxyRenewalService(
         if (result.UpdatedProxy is { } updated)
         {
             proxy.UpdateConnection(updated.Host, updated.Port, updated.Protocol, updated.Username,
-                updated.Password is null ? null : protector.Protect(updated.Password));
+                updated.Password is null ? null : protector.Protect(updated.Password),
+                updated.Country, updated.ProviderGrouping);
         }
         proxy.MarkRenewed();
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

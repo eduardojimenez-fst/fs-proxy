@@ -101,4 +101,36 @@ public sealed class ProviderAccountSyncServiceTests
         touched.ShouldBe(0);
         await adapter.DidNotReceive().SyncProxiesAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<CancellationToken>());
     }
+
+    [Fact]
+    public async Task SyncAsync_Should_PropagateCountryAndProviderGrouping_OnCreateAndUpdate()
+    {
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create("BrightData", ProxyProviderType.BrightData, "{}");
+        var updatingProxy = Proxy.Create(account.Id, "old-host", 1111, ProxyProtocol.Http, null, null, "ext-existing", "us", "old-zone");
+        db.ProviderAccounts.Add(account);
+        db.Proxies.Add(updatingProxy);
+        await db.SaveChangesAsync();
+
+        var adapter = Substitute.For<IProxyProviderAdapter>();
+        adapter.ProviderType.Returns(ProxyProviderType.BrightData);
+        adapter.SupportsSync.Returns(true);
+        adapter.SyncProxiesAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ProviderSyncResult.Ok([
+                new ProviderProxyRecord("ext-existing", "new-ip", 2222, ProxyProtocol.Http, "u", "p", true, "ar", "zone1new"),
+                new ProviderProxyRecord("ext-new", "9.9.9.9", 4444, ProxyProtocol.Http, "u2", "p2", true, "cl", "zone2")]));
+        var factory = Substitute.For<IProxyProviderAdapterFactory>();
+        factory.GetAdapter(ProxyProviderType.BrightData).Returns(adapter);
+
+        var sut = new ProviderAccountSyncService(db, factory, new FakeProtector(), Substitute.For<IOutboxWriter>());
+
+        await sut.SyncAsync(account.Id, CancellationToken.None);
+
+        var updated = await db.Proxies.SingleAsync(p => p.ExternalId == "ext-existing");
+        updated.Country.ShouldBe("ar");
+        updated.ProviderGrouping.ShouldBe("zone1new");
+        var created = await db.Proxies.SingleAsync(p => p.ExternalId == "ext-new");
+        created.Country.ShouldBe("cl");
+        created.ProviderGrouping.ShouldBe("zone2");
+    }
 }

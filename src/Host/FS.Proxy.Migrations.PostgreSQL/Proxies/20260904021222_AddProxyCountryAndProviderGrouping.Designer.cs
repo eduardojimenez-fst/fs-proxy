@@ -3,6 +3,7 @@ using System;
 using FSH.Modules.Proxies.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FS.Proxy.Migrations.PostgreSQL.Proxies
 {
     [DbContext(typeof(ProxiesDbContext))]
-    partial class ProxiesDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260904021222_AddProxyCountryAndProviderGrouping")]
+    partial class AddProxyCountryAndProviderGrouping
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -280,39 +283,6 @@ namespace FS.Proxy.Migrations.PostgreSQL.Proxies
                     b.ToTable("Tags", "proxies");
                 });
 
-            modelBuilder.Entity("FSH.Modules.Proxies.Domain.TagCategory", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Name")
-                        .IsUnique();
-
-                    b.ToTable("TagCategories", "proxies");
-                });
-
-            modelBuilder.Entity("FSH.Modules.Proxies.Domain.TagCategoryValue", b =>
-                {
-                    b.Property<Guid>("TagCategoryId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Value")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)");
-
-                    b.HasKey("TagCategoryId", "Value");
-
-                    b.ToTable("TagCategoryValues", "proxies");
-                });
-
             modelBuilder.Entity("FSH.Modules.Proxies.Domain.TagHealthCheckTargetAssignment", b =>
                 {
                     b.Property<Guid>("TagId")
@@ -376,15 +346,6 @@ namespace FS.Proxy.Migrations.PostgreSQL.Proxies
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("FSH.Modules.Proxies.Domain.TagCategoryValue", b =>
-                {
-                    b.HasOne("FSH.Modules.Proxies.Domain.TagCategory", null)
-                        .WithMany("Values")
-                        .HasForeignKey("TagCategoryId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("FSH.Modules.Proxies.Domain.TagHealthCheckTargetAssignment", b =>
                 {
                     b.HasOne("FSH.Modules.Proxies.Domain.HealthCheckTarget", null)
@@ -418,11 +379,6 @@ namespace FS.Proxy.Migrations.PostgreSQL.Proxies
             modelBuilder.Entity("FSH.Modules.Proxies.Domain.Proxy", b =>
                 {
                     b.Navigation("TagAssignments");
-                });
-
-            modelBuilder.Entity("FSH.Modules.Proxies.Domain.TagCategory", b =>
-                {
-                    b.Navigation("Values");
                 });
 #pragma warning restore 612, 618
         }

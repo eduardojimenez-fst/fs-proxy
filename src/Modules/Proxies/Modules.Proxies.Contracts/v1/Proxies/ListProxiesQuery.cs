@@ -6,4 +6,4 @@ namespace FSH.Modules.Proxies.Contracts.v1.Proxies;
 
 public sealed record ListProxiesQuery(
     IReadOnlyList<string>? Tags, ProxyStatus? Status, Guid? ProviderAccountId,
-    int PageNumber = 1, int PageSize = 20) : IQuery<PagedResponse<ProxyDto>>;
+    string? Country = null, int PageNumber = 1, int PageSize = 20) : IQuery<PagedResponse<ProxyDto>>;

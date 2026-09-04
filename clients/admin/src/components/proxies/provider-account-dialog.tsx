@@ -58,6 +58,18 @@ function buildSchema(isEdit: boolean) {
   });
 }
 
+function credentialsPlaceholder(providerType: ProxyProviderType): string {
+  switch (providerType) {
+    case "BrightData":
+      return '{"apiToken":"...","zone":"...","customerId":"...","gatewayPort":44445}';
+    case "Oxylabs":
+      return '{"username":"...","password":"..."}';
+    case "WebShare":
+    default:
+      return '{"apiKey":"..."}';
+  }
+}
+
 export function ProviderAccountDialog({
   open,
   onClose,
@@ -76,6 +88,7 @@ export function ProviderAccountDialog({
     handleSubmit,
     control,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(buildSchema(isEdit)),
@@ -136,6 +149,8 @@ export function ProviderAccountDialog({
   });
 
   const submitting = isSubmitting || mutation.isPending;
+  const watchedProviderType = watch("providerType");
+  const effectiveProviderType = isEdit ? (account!.providerType === "Manual" ? "WebShare" : account!.providerType) : watchedProviderType;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -190,7 +205,7 @@ export function ProviderAccountDialog({
                   id="pa-credentials"
                   type={showCredentials ? "text" : "password"}
                   autoComplete="off"
-                  placeholder='{"apiKey":"..."}'
+                  placeholder={credentialsPlaceholder(effectiveProviderType)}
                   className="pr-10 font-mono"
                   {...register("plaintextCredentials")}
                 />
