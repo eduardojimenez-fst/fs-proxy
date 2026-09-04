@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ApiRequestError } from "@/lib/api-client";
+import { countryFlag } from "@/lib/country-flag";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
 import {
@@ -135,7 +136,7 @@ export function TagCategoriesPage() {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {category.values.map((value) => (
                   <Badge key={value} variant="muted" className="gap-1 font-mono">
-                    {value}
+                    {category.name.toLowerCase() === "country" ? `${countryFlag(value)} ${value}` : value}
                     {canUpdate && (
                       <button
                         type="button"

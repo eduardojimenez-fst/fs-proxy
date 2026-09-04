@@ -8,6 +8,7 @@ import { Select } from "@/components/ui/select";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/list";
 import { ApiRequestError } from "@/lib/api-client";
+import { countryFlag } from "@/lib/country-flag";
 import { listTagCategories } from "@/api/tag-categories";
 import { setProxyTags, type ProxyDto } from "@/api/proxies";
 
@@ -47,10 +48,13 @@ export function ProxyTagsDialog({ open, proxy, onClose }: { open: boolean; proxy
     const consumed = new Set<string>();
     for (const category of cats) {
       for (const value of category.values) {
-        const composed = `${category.name}:${value}`;
-        if (proxy.tags.includes(composed)) {
+        // Catalog casing is preserved for display, but the persisted Tag is always lowercase
+        // (composed strings are normalized server-side), so match case-insensitively here.
+        const composed = `${category.name}:${value}`.toLowerCase();
+        const match = proxy.tags.find((t) => t.toLowerCase() === composed);
+        if (match) {
           matched[category.name] = value;
-          consumed.add(composed);
+          consumed.add(match);
           break;
         }
       }
@@ -99,7 +103,10 @@ export function ProxyTagsDialog({ open, proxy, onClose }: { open: boolean; proxy
                 <Select
                   value={selectedByCategory[category.name] ?? ""}
                   onChange={(v) => setSelectedByCategory((prev) => ({ ...prev, [category.name]: v }))}
-                  options={category.values.map((v) => ({ value: v, label: v }))}
+                  options={category.values.map((v) => ({
+                    value: v,
+                    label: category.name.toLowerCase() === "country" ? [countryFlag(v), v].filter(Boolean).join(" ") : v,
+                  }))}
                   placeholder="— none —"
                   className="w-full"
                   minWidth="100%"

@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/select";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/list";
 import { ApiRequestError } from "@/lib/api-client";
+import { countryFlag } from "@/lib/country-flag";
 import { listTagCategories } from "@/api/tag-categories";
 import { assignProxyTag, unassignProxyTag } from "@/api/proxies";
 
@@ -45,6 +46,11 @@ export function BulkTagDialog({
     if (custom.trim()) return custom.trim();
     if (category && value) return `${category}:${value}`;
     return null;
+  }
+
+  function valueOptions(values: string[], categoryName: string) {
+    const isCountry = categoryName.toLowerCase() === "country";
+    return values.map((v) => ({ value: v, label: isCountry ? [countryFlag(v), v].filter(Boolean).join(" ") : v }));
   }
 
   const assignMutation = useMutation({
@@ -105,7 +111,7 @@ export function BulkTagDialog({
                 <Select
                   value={addValue}
                   onChange={setAddValue}
-                  options={addCategoryValues.map((v) => ({ value: v, label: v }))}
+                  options={valueOptions(addCategoryValues, addCategory)}
                   placeholder="— choose —"
                   className="w-full"
                   minWidth="100%"
@@ -152,7 +158,7 @@ export function BulkTagDialog({
                 <Select
                   value={removeValue}
                   onChange={setRemoveValue}
-                  options={removeCategoryValues.map((v) => ({ value: v, label: v }))}
+                  options={valueOptions(removeCategoryValues, removeCategory)}
                   placeholder="— choose —"
                   className="w-full"
                   minWidth="100%"

@@ -11,7 +11,7 @@ public sealed class TagCategoryTests
     {
         var category = TagCategory.Create("  Pais  ");
 
-        category.Name.ShouldBe("pais");
+        category.Name.ShouldBe("Pais");
         category.Values.ShouldBeEmpty();
     }
 
@@ -22,7 +22,7 @@ public sealed class TagCategoryTests
 
         category.Rename("  Country  ");
 
-        category.Name.ShouldBe("country");
+        category.Name.ShouldBe("Country");
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public sealed class TagCategoryTests
 
         category.AddValue("  CL  ");
 
-        category.Values.Single().Value.ShouldBe("cl");
+        category.Values.Single().Value.ShouldBe("CL");
         category.Values.Single().TagCategoryId.ShouldBe(category.Id);
     }
 

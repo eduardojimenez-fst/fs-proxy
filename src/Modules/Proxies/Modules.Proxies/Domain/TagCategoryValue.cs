@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using FSH.Framework.Core.Domain;
 
 namespace FSH.Modules.Proxies.Domain;
@@ -18,13 +17,9 @@ public sealed class TagCategoryValue : IGlobalEntity
     internal static TagCategoryValue Create(Guid tagCategoryId, string value) =>
         new() { TagCategoryId = tagCategoryId, Value = Normalize(value) };
 
-    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase",
-        Justification = "Tag category values are canonicalized to lowercase by design as a " +
-            "stable, human-readable identifier used in the admin UI — not a " +
-            "security-sensitive comparison, so CA1308's round-trip concern does not apply.")]
     internal static string Normalize(string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value);
-        return value.Trim().ToLowerInvariant();
+        return value.Trim();
     }
 }

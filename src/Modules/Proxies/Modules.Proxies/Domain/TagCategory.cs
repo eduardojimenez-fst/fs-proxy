@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using FSH.Framework.Core.Domain;
 
 namespace FSH.Modules.Proxies.Domain;
@@ -27,7 +26,7 @@ public sealed class TagCategory : AggregateRoot<Guid>, IGlobalEntity
     public void AddValue(string value)
     {
         var normalized = TagCategoryValue.Normalize(value);
-        if (_values.Any(v => v.Value == normalized))
+        if (_values.Any(v => string.Equals(v.Value, normalized, StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException($"Value \"{normalized}\" already exists in category \"{Name}\".");
         }
@@ -37,16 +36,12 @@ public sealed class TagCategory : AggregateRoot<Guid>, IGlobalEntity
     public void RemoveValue(string value)
     {
         var normalized = TagCategoryValue.Normalize(value);
-        _values.RemoveAll(v => v.Value == normalized);
+        _values.RemoveAll(v => string.Equals(v.Value, normalized, StringComparison.OrdinalIgnoreCase));
     }
 
-    [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase",
-        Justification = "Tag category names are canonicalized to lowercase by design (e.g. \"pais\") as a " +
-            "stable, human-readable identifier used in the admin UI — not a " +
-            "security-sensitive comparison, so CA1308's round-trip concern does not apply.")]
     private static string Normalize(string name)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        return name.Trim().ToLowerInvariant();
+        return name.Trim();
     }
 }
