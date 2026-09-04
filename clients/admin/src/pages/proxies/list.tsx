@@ -451,9 +451,17 @@ function ProxyDesktopRow({
             {proxy.providerType}
           </span>
         </div>
-        <span className="truncate text-[12px] text-[var(--color-muted-foreground)]">
-          {proxy.tags.length > 0 ? proxy.tags.join(", ") : "—"}
-        </span>
+        <div className="flex min-w-0 flex-wrap gap-1">
+          {proxy.tags.length > 0 ? (
+            proxy.tags.map((tag) => (
+              <Badge key={tag} variant="muted" className="font-mono text-[10.5px]">
+                {tag}
+              </Badge>
+            ))
+          ) : (
+            <span className="text-[12px] text-[var(--color-muted-foreground)]">—</span>
+          )}
+        </div>
         <div className="flex items-center justify-end gap-1">
           {canManageTags ? (
             <Button variant="ghost" size="sm" onClick={onEditTags}>
@@ -529,9 +537,17 @@ function ProxyMobileCard({
           {proxy.status}
         </Badge>
       </div>
-      <p className="mt-2 truncate text-[11px] text-[var(--color-muted-foreground)]">
-        {proxy.tags.length > 0 ? proxy.tags.join(", ") : "No tags"}
-      </p>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {proxy.tags.length > 0 ? (
+          proxy.tags.map((tag) => (
+            <Badge key={tag} variant="muted" className="font-mono text-[10.5px]">
+              {tag}
+            </Badge>
+          ))
+        ) : (
+          <span className="text-[11px] text-[var(--color-muted-foreground)]">No tags</span>
+        )}
+      </div>
       {(canUpdate || canManageTags) && (
         <div className="mt-3 flex gap-2">
           {canManageTags && (

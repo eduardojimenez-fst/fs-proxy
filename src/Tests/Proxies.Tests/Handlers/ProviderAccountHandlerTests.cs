@@ -1,3 +1,4 @@
+using FSH.Framework.Core.Exceptions;
 using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Contracts.v1.ProviderAccounts;
 using FSH.Modules.Proxies.Data;
@@ -68,6 +69,43 @@ public sealed class ProviderAccountHandlerTests
         await sut.Handle(new DeleteProviderAccountCommand(account.Id), CancellationToken.None);
 
         (await db.ProviderAccounts.AnyAsync(x => x.Id == account.Id)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Delete_Should_Throw_When_ProxiesExist_And_NotForced()
+    {
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create("BrightData", ProxyProviderType.BrightData, "protected:x");
+        var proxy = Proxy.Create(account.Id, "10.0.0.1", 8080, ProxyProtocol.Http, null, null, null);
+        db.ProviderAccounts.Add(account);
+        db.Proxies.Add(proxy);
+        await db.SaveChangesAsync();
+        var sut = new DeleteProviderAccountCommandHandler(db);
+
+        var ex = await Should.ThrowAsync<CustomException>(
+            () => sut.Handle(new DeleteProviderAccountCommand(account.Id), CancellationToken.None).AsTask());
+
+        ex.Message.ShouldContain("1 synced proxy");
+        (await db.ProviderAccounts.AnyAsync(x => x.Id == account.Id)).ShouldBeTrue();
+        (await db.Proxies.AnyAsync(x => x.Id == proxy.Id)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Delete_Should_CascadeDeleteProxies_When_Forced()
+    {
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create("BrightData", ProxyProviderType.BrightData, "protected:x");
+        var proxy1 = Proxy.Create(account.Id, "10.0.0.1", 8080, ProxyProtocol.Http, null, null, null);
+        var proxy2 = Proxy.Create(account.Id, "10.0.0.2", 8080, ProxyProtocol.Http, null, null, null);
+        db.ProviderAccounts.Add(account);
+        db.Proxies.AddRange(proxy1, proxy2);
+        await db.SaveChangesAsync();
+        var sut = new DeleteProviderAccountCommandHandler(db);
+
+        await sut.Handle(new DeleteProviderAccountCommand(account.Id, Force: true), CancellationToken.None);
+
+        (await db.ProviderAccounts.AnyAsync(x => x.Id == account.Id)).ShouldBeFalse();
+        (await db.Proxies.AnyAsync(x => x.ProviderAccountId == account.Id)).ShouldBeFalse();
     }
 
     private sealed class FakeSecretProtector : IProxySecretProtector

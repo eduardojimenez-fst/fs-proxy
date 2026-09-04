@@ -13,13 +13,13 @@ public static class DeleteProviderAccountEndpoint
     internal static RouteHandlerBuilder MapDeleteProviderAccountEndpoint(this IEndpointRouteBuilder endpoints)
     {
         return endpoints.MapDelete("/provider-accounts/{id:guid}",
-                async (Guid id, IMediator mediator, CancellationToken ct) =>
+                async (Guid id, bool? force, IMediator mediator, CancellationToken ct) =>
                 {
-                    await mediator.Send(new DeleteProviderAccountCommand(id), ct);
+                    await mediator.Send(new DeleteProviderAccountCommand(id, force ?? false), ct);
                     return Results.NoContent();
                 })
             .WithName("DeleteProviderAccount")
-            .WithSummary("Delete a proxy provider account")
+            .WithSummary("Delete a proxy provider account (?force=true also deletes its already-synced proxies)")
             .RequirePermission(ProxiesPermissions.ProviderAccounts.Delete);
     }
 }

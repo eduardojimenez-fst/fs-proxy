@@ -20,8 +20,8 @@ public sealed partial class ProxiesDbInitializer(
     ILogger<ProxiesDbInitializer> logger)
     : IDbInitializer
 {
-    private const string BrightDataDevAccountName = "BrightData (dev seed)";
-    private const string WebShareDevAccountName = "WebShare (dev seed)";
+    private const string BrightDataDevAccountName = "Bright Data - JP - datacenter_new_proxy_manager (dev seed)";
+    private const string WebShareDevAccountName = "WebShare JP - (dev seed)";
 
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {

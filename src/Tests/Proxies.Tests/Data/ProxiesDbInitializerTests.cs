@@ -70,8 +70,8 @@ public sealed class ProxiesDbInitializerTests
 
         await sut.SeedAsync(CancellationToken.None);
 
-        (await db.ProviderAccounts.AnyAsync(x => x.Name == "BrightData (dev seed)")).ShouldBeTrue();
-        (await db.ProviderAccounts.AnyAsync(x => x.Name == "WebShare (dev seed)")).ShouldBeFalse();
+        (await db.ProviderAccounts.AnyAsync(x => x.Name == "Bright Data - JP - datacenter_new_proxy_manager (dev seed)")).ShouldBeTrue();
+        (await db.ProviderAccounts.AnyAsync(x => x.Name == "WebShare JP - (dev seed)")).ShouldBeFalse();
     }
 
     [Fact]
@@ -82,8 +82,8 @@ public sealed class ProxiesDbInitializerTests
 
         await sut.SeedAsync(CancellationToken.None);
 
-        (await db.ProviderAccounts.AnyAsync(x => x.Name == "BrightData (dev seed)")).ShouldBeTrue();
-        (await db.ProviderAccounts.AnyAsync(x => x.Name == "WebShare (dev seed)")).ShouldBeTrue();
+        (await db.ProviderAccounts.AnyAsync(x => x.Name == "Bright Data - JP - datacenter_new_proxy_manager (dev seed)")).ShouldBeTrue();
+        (await db.ProviderAccounts.AnyAsync(x => x.Name == "WebShare JP - (dev seed)")).ShouldBeTrue();
     }
 
     [Fact]
@@ -95,8 +95,8 @@ public sealed class ProxiesDbInitializerTests
         await sut.SeedAsync(CancellationToken.None);
         await sut.SeedAsync(CancellationToken.None);
 
-        (await db.ProviderAccounts.CountAsync(x => x.Name == "BrightData (dev seed)")).ShouldBe(1);
-        (await db.ProviderAccounts.CountAsync(x => x.Name == "WebShare (dev seed)")).ShouldBe(1);
+        (await db.ProviderAccounts.CountAsync(x => x.Name == "Bright Data - JP - datacenter_new_proxy_manager (dev seed)")).ShouldBe(1);
+        (await db.ProviderAccounts.CountAsync(x => x.Name == "WebShare JP - (dev seed)")).ShouldBe(1);
         (await db.ProviderAccounts.CountAsync(x => x.Id == ManualProviderAccount.Id)).ShouldBe(1);
     }
 
