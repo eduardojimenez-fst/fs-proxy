@@ -16,7 +16,7 @@ public sealed class ProxyConfiguration : IEntityTypeConfiguration<Proxy>
         builder.Property(x => x.Username).HasMaxLength(255);
         builder.Property(x => x.ProtectedPassword).HasMaxLength(1024);
         builder.Property(x => x.ExternalId).HasMaxLength(255);
-        builder.Property(x => x.Country).HasMaxLength(10);
+        builder.Property(x => x.Geolocation).HasMaxLength(10);
         builder.Property(x => x.ProviderGrouping).HasMaxLength(255);
         builder.HasIndex(x => new { x.ProviderAccountId, x.ExternalId });
         builder.HasIndex(x => x.Status);

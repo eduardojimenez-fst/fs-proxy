@@ -94,11 +94,11 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
 
         if (ipsResponse.StatusCode == HttpStatusCode.BadRequest)
         {
-            var poolCountry = TruncateToNullIfTooLong(SingleCountryOrNull(zoneConfig.Plan?.DefaultCountry ?? zoneConfig.Plan?.Country));
+            var poolGeolocation = TruncateToNullIfTooLong(SingleGeolocationOrNull(zoneConfig.Plan?.DefaultCountry ?? zoneConfig.Plan?.Country));
             var poolUsername = $"brd-customer-{credentials.CustomerId}-zone-{credentials.Zone}";
             return ProviderSyncResult.Ok([
                 new ProviderProxyRecord($"{credentials.Zone}:pool", credentials.GatewayHost, credentials.GatewayPort, ProxyProtocol.Http,
-                    poolUsername, password, IsActive: true, Country: poolCountry, ProviderGrouping: credentials.Zone)
+                    poolUsername, password, IsActive: true, Geolocation: poolGeolocation, ProviderGrouping: credentials.Zone)
             ]);
         }
 
@@ -127,7 +127,7 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
                 Username: $"brd-customer-{credentials.CustomerId}-zone-{credentials.Zone}-ip-{ip.Ip}",
                 Password: password,
                 IsActive: true,
-                Country: TruncateToNullIfTooLong(ip.Maxmind),
+                Geolocation: TruncateToNullIfTooLong(ip.Maxmind),
                 ProviderGrouping: credentials.Zone))
             .ToList();
 
@@ -139,19 +139,19 @@ public sealed class BrightDataAdapter(IHttpClientFactory httpClientFactory) : IP
     /// (e.g. "ar us") with no per-IP breakdown available in the rotating (pool) case — there is
     /// no single correct country to attribute, so this returns null rather than guessing.
     /// </summary>
-    private static string? SingleCountryOrNull(string? country) =>
-        string.IsNullOrWhiteSpace(country) || country.Contains(' ', StringComparison.Ordinal) ? null : country;
+    private static string? SingleGeolocationOrNull(string? geolocation) =>
+        string.IsNullOrWhiteSpace(geolocation) || geolocation.Contains(' ', StringComparison.Ordinal) ? null : geolocation;
 
     /// <summary>
-    /// <see cref="Domain.Proxy.Country"/> is a <c>varchar(10)</c> column. A provider-reported
-    /// country value that's longer than that (an unexpected delimiter, a full name instead of an
-    /// ISO2 code, etc.) would pass every InMemory-backed test and then fail with a Postgres
+    /// <see cref="Domain.Proxy.Geolocation"/> is a <c>varchar(10)</c> column. A provider-reported
+    /// geolocation value that's longer than that (an unexpected delimiter, a full name instead of
+    /// an ISO2 code, etc.) would pass every InMemory-backed test and then fail with a Postgres
     /// 22001 "value too long" error on SaveChanges in production. Preferring null over truncating
     /// or throwing avoids both silently corrupting the value and crashing a sync over a field
     /// that's informational-only.
     /// </summary>
-    private static string? TruncateToNullIfTooLong(string? country) =>
-        country is { Length: > 10 } ? null : country;
+    private static string? TruncateToNullIfTooLong(string? geolocation) =>
+        geolocation is { Length: > 10 } ? null : geolocation;
 
     public Task<ProviderRenewResult> RenewProxyAsync(ProviderAccount account, string decryptedCredentials, Proxy proxy, CancellationToken cancellationToken) =>
         Task.FromResult(ProviderRenewResult.Unsupported());

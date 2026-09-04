@@ -103,7 +103,7 @@ public sealed class ProviderAccountSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAsync_Should_PropagateCountryAndProviderGrouping_OnCreateAndUpdate()
+    public async Task SyncAsync_Should_PropagateGeolocationAndProviderGrouping_OnCreateAndUpdate()
     {
         await using var db = CreateDb();
         var account = ProviderAccount.Create("BrightData", ProxyProviderType.BrightData, "{}");
@@ -127,10 +127,10 @@ public sealed class ProviderAccountSyncServiceTests
         await sut.SyncAsync(account.Id, CancellationToken.None);
 
         var updated = await db.Proxies.SingleAsync(p => p.ExternalId == "ext-existing");
-        updated.Country.ShouldBe("ar");
+        updated.Geolocation.ShouldBe("ar");
         updated.ProviderGrouping.ShouldBe("zone1new");
         var created = await db.Proxies.SingleAsync(p => p.ExternalId == "ext-new");
-        created.Country.ShouldBe("cl");
+        created.Geolocation.ShouldBe("cl");
         created.ProviderGrouping.ShouldBe("zone2");
     }
 }
