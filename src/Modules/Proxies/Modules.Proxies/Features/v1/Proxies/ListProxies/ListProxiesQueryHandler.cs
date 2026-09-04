@@ -19,7 +19,12 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
         if (query.Status is { } status) q = q.Where(p => p.Status == status);
         if (query.ProviderAccountId is { } accountId) q = q.Where(p => p.ProviderAccountId == accountId);
         if (!string.IsNullOrWhiteSpace(query.Country))
-            q = q.Where(p => p.Country != null && string.Equals(p.Country, query.Country, StringComparison.OrdinalIgnoreCase));
+        {
+            var normalizedCountry = query.Country.ToUpperInvariant();
+#pragma warning disable CA1862, CA1304, CA1311 // EF Core cannot translate string.Equals(..., StringComparison) to SQL; using ToUpper() is the translatable approach — see https://learn.microsoft.com/ef/core/miscellaneous/collations-and-case-sensitivity
+            q = q.Where(p => p.Country != null && p.Country.ToUpper() == normalizedCountry);
+#pragma warning restore CA1862, CA1304, CA1311
+        }
         if (query.Tags is { Count: > 0 })
         {
             var normalized = query.Tags.Select(Tag.Normalize).ToList();
