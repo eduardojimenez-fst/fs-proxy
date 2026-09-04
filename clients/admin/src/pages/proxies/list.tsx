@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Globe, RefreshCw } from "lucide-react";
+import { Globe, RefreshCw, Tag as TagIcon } from "lucide-react";
 import { EntityPageHeader, ErrorBand, LoadingRow, Pagination } from "@/components/list";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { ApiRequestError } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
+import { ProxyTagsDialog } from "@/components/proxies/proxy-tags-dialog";
 import {
   disableProxies,
   enableProxies,
@@ -66,6 +67,7 @@ export function ProxiesListPage() {
   const [status, setStatus] = useState<ProxyStatus | "">("");
   const [providerAccountId, setProviderAccountId] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tagsDialogProxy, setTagsDialogProxy] = useState<ProxyDto | null>(null);
 
   // Debounce the free-text tags input → the committed `tags` filter.
   useEffect(() => {
@@ -295,6 +297,7 @@ export function ProxiesListPage() {
                 onToggleSelected={() => toggleSelected(proxy.id)}
                 onEnable={() => enableMutation.mutate({ proxyIds: [proxy.id] })}
                 onDisable={() => disableMutation.mutate({ proxyIds: [proxy.id] })}
+                onEditTags={() => setTagsDialogProxy(proxy)}
               />
             ))}
           </div>
@@ -343,6 +346,7 @@ export function ProxiesListPage() {
                   onToggleSelected={() => toggleSelected(proxy.id)}
                   onEnable={() => enableMutation.mutate({ proxyIds: [proxy.id] })}
                   onDisable={() => disableMutation.mutate({ proxyIds: [proxy.id] })}
+                  onEditTags={() => setTagsDialogProxy(proxy)}
                 />
               ))}
             </ol>
@@ -364,6 +368,8 @@ export function ProxiesListPage() {
           noun="proxies"
         />
       )}
+
+      <ProxyTagsDialog open={tagsDialogProxy !== null} proxy={tagsDialogProxy} onClose={() => setTagsDialogProxy(null)} />
     </div>
   );
 }
@@ -378,6 +384,7 @@ function ProxyDesktopRow({
   onToggleSelected,
   onEnable,
   onDisable,
+  onEditTags,
 }: {
   proxy: ProxyDto;
   selected: boolean;
@@ -386,6 +393,7 @@ function ProxyDesktopRow({
   onToggleSelected: () => void;
   onEnable: () => void;
   onDisable: () => void;
+  onEditTags: () => void;
 }) {
   return (
     <li className="list-none">
@@ -424,7 +432,13 @@ function ProxyDesktopRow({
         <span className="truncate text-[12px] text-[var(--color-muted-foreground)]">
           {proxy.tags.length > 0 ? proxy.tags.join(", ") : "—"}
         </span>
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-1">
+          {canUpdate ? (
+            <Button variant="ghost" size="sm" onClick={onEditTags}>
+              <TagIcon className="h-3.5 w-3.5" />
+              <span className="sr-only sm:not-sr-only sm:ml-1">Tags</span>
+            </Button>
+          ) : null}
           {canUpdate ? (
             proxy.status === "Active" ? (
               <Button variant="outline" size="sm" disabled={busy} onClick={onDisable}>
@@ -452,6 +466,7 @@ function ProxyMobileCard({
   onToggleSelected,
   onEnable,
   onDisable,
+  onEditTags,
 }: {
   proxy: ProxyDto;
   selected: boolean;
@@ -460,6 +475,7 @@ function ProxyMobileCard({
   onToggleSelected: () => void;
   onEnable: () => void;
   onDisable: () => void;
+  onEditTags: () => void;
 }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-xs">
@@ -491,13 +507,16 @@ function ProxyMobileCard({
         {proxy.tags.length > 0 ? proxy.tags.join(", ") : "No tags"}
       </p>
       {canUpdate && (
-        <div className="mt-3">
+        <div className="mt-3 flex gap-2">
+          <Button variant="outline" size="sm" onClick={onEditTags} className="flex-1">
+            <TagIcon className="mr-1 h-3.5 w-3.5" /> Tags
+          </Button>
           {proxy.status === "Active" ? (
-            <Button variant="outline" size="sm" disabled={busy} onClick={onDisable} className="w-full">
+            <Button variant="outline" size="sm" disabled={busy} onClick={onDisable} className="flex-1">
               Disable
             </Button>
           ) : (
-            <Button size="sm" disabled={busy} onClick={onEnable} className="w-full">
+            <Button size="sm" disabled={busy} onClick={onEnable} className="flex-1">
               Enable
             </Button>
           )}
