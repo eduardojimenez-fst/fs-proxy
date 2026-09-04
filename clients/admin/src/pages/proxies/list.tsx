@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Globe, RefreshCw, Tag as TagIcon } from "lucide-react";
+import { Globe, RefreshCw, Tag as TagIcon, X } from "lucide-react";
 import { EntityPageHeader, ErrorBand, LoadingRow, Pagination } from "@/components/list";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { ApiRequestError } from "@/lib/api-client";
 import { cn } from "@/lib/cn";
+import { countryFlag } from "@/lib/country-flag";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
 import { ProxyTagsDialog } from "@/components/proxies/proxy-tags-dialog";
@@ -22,6 +24,7 @@ import {
   type SetProxiesStatusInput,
 } from "@/api/proxies";
 import { listProviderAccounts } from "@/api/provider-accounts";
+import { listTagCategories } from "@/api/tag-categories";
 
 const PAGE_SIZE = 20;
 
@@ -63,27 +66,35 @@ export function ProxiesListPage() {
   const queryClient = useQueryClient();
 
   const [pageNumber, setPageNumber] = useState(1);
-  const [tagsInput, setTagsInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
+  const [filterCategory, setFilterCategory] = useState("");
+  const [filterValue, setFilterValue] = useState("");
+  const [customTagInput, setCustomTagInput] = useState("");
   const [status, setStatus] = useState<ProxyStatus | "">("");
   const [providerAccountId, setProviderAccountId] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagsDialogProxy, setTagsDialogProxy] = useState<ProxyDto | null>(null);
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
 
-  // Debounce the free-text tags input → the committed `tags` filter.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setTags(
-        tagsInput
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-      );
-      setPageNumber(1);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [tagsInput]);
+  const tagCategoriesQuery = useQuery({
+    queryKey: ["proxies", "tag-categories"],
+    queryFn: () => listTagCategories(),
+    staleTime: 60_000,
+  });
+  const tagCategories = tagCategoriesQuery.data ?? [];
+  const filterCategoryValues = tagCategories.find((c) => c.name === filterCategory)?.values ?? [];
+
+  function addTagFilter(tag: string) {
+    const trimmed = tag.trim();
+    if (!trimmed) return;
+    setTags((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
+    setPageNumber(1);
+  }
+
+  function removeTagFilter(tag: string) {
+    setTags((prev) => prev.filter((t) => t !== tag));
+    setPageNumber(1);
+  }
 
   // Reset to page 1 whenever a dropdown filter changes.
   useEffect(() => {
@@ -164,7 +175,10 @@ export function ProxiesListPage() {
   const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "";
 
   const clearFilters = () => {
-    setTagsInput("");
+    setTags([]);
+    setFilterCategory("");
+    setFilterValue("");
+    setCustomTagInput("");
     setStatus("");
     setProviderAccountId("");
   };
@@ -202,20 +216,77 @@ export function ProxiesListPage() {
       {/* Filter row */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label
-            htmlFor="proxies-tags"
-            className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
-          >
+          <span className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]">
             Tags
-          </label>
-          <input
-            id="proxies-tags"
-            type="search"
-            placeholder="pais:cl, funcionalidad:licitaciones"
-            value={tagsInput}
-            onChange={(e) => setTagsInput(e.target.value)}
-            className="h-9 w-72 max-w-full rounded-md border border-[var(--color-input)] bg-transparent px-3 font-mono text-[12.5px] outline-none transition-colors placeholder:text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)] focus-visible:border-[var(--color-ring)] focus-visible:ring-[3px] focus-visible:ring-[oklch(from_var(--color-ring)_l_c_h_/_0.5)]"
-          />
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div data-testid="proxies-tag-category-select">
+              <Select
+                value={filterCategory}
+                onChange={(v) => {
+                  setFilterCategory(v);
+                  setFilterValue("");
+                }}
+                options={tagCategories.map((c) => ({ value: c.name, label: c.name }))}
+                placeholder="Category…"
+                minWidth="9rem"
+              />
+            </div>
+            <div data-testid="proxies-tag-value-select">
+              <Select
+                value={filterValue}
+                onChange={setFilterValue}
+                options={filterCategoryValues.map((v) => ({
+                  value: v,
+                  label: filterCategory.toLowerCase() === "country" ? [countryFlag(v), v].filter(Boolean).join(" ") : v,
+                }))}
+                placeholder="Value…"
+                minWidth="9rem"
+                disabled={!filterCategory}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Add category tag filter"
+              disabled={!filterCategory || !filterValue}
+              onClick={() => {
+                addTagFilter(`${filterCategory}:${filterValue}`);
+                setFilterValue("");
+              }}
+            >
+              + Add
+            </Button>
+            <Input
+              type="search"
+              aria-label="Custom tag filter"
+              placeholder="or custom tag"
+              value={customTagInput}
+              onChange={(e) => setCustomTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTagFilter(customTagInput);
+                  setCustomTagInput("");
+                }
+              }}
+              className="h-9 w-32"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Add custom tag filter"
+              disabled={!customTagInput.trim()}
+              onClick={() => {
+                addTagFilter(customTagInput);
+                setCustomTagInput("");
+              }}
+            >
+              + Add
+            </Button>
+          </div>
         </div>
 
         <Select
@@ -271,6 +342,19 @@ export function ProxiesListPage() {
           </div>
         )}
       </div>
+
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {tags.map((tag) => (
+            <Badge key={tag} variant="muted" className="gap-1 font-mono text-[11px]">
+              {tag}
+              <button type="button" aria-label={`Remove tag filter ${tag}`} onClick={() => removeTagFilter(tag)}>
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          ))}
+        </div>
+      )}
 
       {proxiesQuery.isError && <ErrorBand message={describeError(proxiesQuery.error)} />}
 

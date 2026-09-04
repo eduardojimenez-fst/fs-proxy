@@ -16,11 +16,19 @@ const PROXY_CL = {
   lastRenewedAtUtc: null,
 };
 
+const TAG_CATEGORIES = [
+  { id: "cat-1", name: "country", values: ["CL", "AR"] },
+  { id: "cat-2", name: "entityType", values: ["Tender", "PurchaseOrder"] },
+];
+
 test.beforeEach(async ({ page }) => {
   await seedAuthedSession(page, { ...TEST_USER, permissions: [...ADMIN_PERMS] });
   await installAdminShellMocks(page);
   await page.route("**/api/v1/proxies/provider-accounts*", async (route) => {
     await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([])) });
+  });
+  await page.route("**/api/v1/proxies/tag-categories*", async (route) => {
+    await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(TAG_CATEGORIES) });
   });
 });
 
@@ -64,5 +72,47 @@ test.describe("proxies list", () => {
     await page.getByRole("button", { name: "Disable", exact: true }).click();
 
     await expect.poll(() => disableCalled).toBe(true);
+  });
+
+  test("filters by a catalog category/value pair via the dynamic tag picker", async ({ page }) => {
+    let lastUrl = "";
+    await page.route("**/api/v1/proxies/?*", async (route) => {
+      lastUrl = route.request().url();
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([])) });
+    });
+
+    await page.goto("/proxies");
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // The Select is a Radix DropdownMenu-based combobox, not a native <select>.
+    await page.getByTestId("proxies-tag-category-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: "country", exact: true }).click();
+    await page.getByTestId("proxies-tag-value-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: /CL/ }).click();
+    await page.getByRole("button", { name: "Add category tag filter" }).click();
+
+    await expect(page.getByText("country:CL", { exact: true })).toBeVisible();
+    await expect.poll(() => new URL(lastUrl).searchParams.getAll("tags")).toEqual(["country:CL"]);
+
+    // Removing the chip clears the filter.
+    await page.getByRole("button", { name: "Remove tag filter country:CL" }).click();
+    await expect(page.getByText("country:CL", { exact: true })).toHaveCount(0);
+  });
+
+  test("filters by a custom free-text tag", async ({ page }) => {
+    let lastUrl = "";
+    await page.route("**/api/v1/proxies/?*", async (route) => {
+      lastUrl = route.request().url();
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([])) });
+    });
+
+    await page.goto("/proxies");
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole("searchbox", { name: "Custom tag filter" }).fill("legacy-note");
+    await page.getByRole("button", { name: "Add custom tag filter" }).click();
+
+    await expect(page.getByText("legacy-note", { exact: true })).toBeVisible();
+    await expect.poll(() => new URL(lastUrl).searchParams.getAll("tags")).toEqual(["legacy-note"]);
   });
 });
