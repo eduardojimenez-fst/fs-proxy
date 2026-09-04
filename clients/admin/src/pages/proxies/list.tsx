@@ -12,6 +12,7 @@ import { cn } from "@/lib/cn";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
 import { ProxyTagsDialog } from "@/components/proxies/proxy-tags-dialog";
+import { BulkTagDialog } from "@/components/proxies/bulk-tag-dialog";
 import {
   disableProxies,
   enableProxies,
@@ -68,6 +69,7 @@ export function ProxiesListPage() {
   const [providerAccountId, setProviderAccountId] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagsDialogProxy, setTagsDialogProxy] = useState<ProxyDto | null>(null);
+  const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
 
   // Debounce the free-text tags input → the committed `tags` filter.
   useEffect(() => {
@@ -255,6 +257,9 @@ export function ProxiesListPage() {
             >
               Disable selected
             </Button>
+            <Button variant="outline" size="sm" onClick={() => setBulkTagDialogOpen(true)}>
+              Manage tags
+            </Button>
           </div>
         )}
       </div>
@@ -370,6 +375,7 @@ export function ProxiesListPage() {
       )}
 
       <ProxyTagsDialog open={tagsDialogProxy !== null} proxy={tagsDialogProxy} onClose={() => setTagsDialogProxy(null)} />
+      <BulkTagDialog open={bulkTagDialogOpen} proxyIds={[...selected]} onClose={() => setBulkTagDialogOpen(false)} />
     </div>
   );
 }
