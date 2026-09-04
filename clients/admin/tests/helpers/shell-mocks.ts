@@ -46,6 +46,10 @@ export const ADMIN_PERMS = [
   "Permissions.Proxies.ManualProxies.Create",
   "Permissions.Proxies.ManualProxies.Update",
   "Permissions.Proxies.ManualProxies.Delete",
+  "Permissions.Proxies.Tags.View",
+  "Permissions.Proxies.Tags.Create",
+  "Permissions.Proxies.Tags.Update",
+  "Permissions.Proxies.Tags.Delete",
 ] as const;
 
 export const ADMIN_PROFILE = {
