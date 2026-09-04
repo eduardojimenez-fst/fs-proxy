@@ -44,22 +44,30 @@ public sealed class WebShareAdapter(IHttpClientFactory httpClientFactory) : IPro
         }
 
         using var client = httpClientFactory.CreateClient(ClientName);
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page_size=100");
-        request.Headers.TryAddWithoutValidation("Authorization", $"Token {credentials.ApiKey}");
+        var proxies = new List<ProviderProxyRecord>();
+        string? nextUrl = "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=100";
 
-        using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
+        while (nextUrl is not null)
         {
-            return ProviderSyncResult.Failed($"WebShare returned {(int)response.StatusCode} {response.ReasonPhrase}.");
+            using var request = new HttpRequestMessage(HttpMethod.Get, nextUrl);
+            request.Headers.TryAddWithoutValidation("Authorization", $"Token {credentials.ApiKey}");
+
+            using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return ProviderSyncResult.Failed($"WebShare returned {(int)response.StatusCode} {response.ReasonPhrase}.");
+            }
+
+            var payload = await response.Content.ReadFromJsonAsync<WebShareProxyListResponse>(cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidOperationException("WebShare returned an empty proxy list response.");
+
+            proxies.AddRange(payload.Results
+                .Where(r => r.Valid)
+                .Select(r => new ProviderProxyRecord(r.Id, r.ProxyAddress, r.Port, ProxyProtocol.Http, r.Username, r.Password,
+                    IsActive: true, Country: r.CountryCode, ProviderGrouping: "Proxy List")));
+
+            nextUrl = payload.Next;
         }
-
-        var payload = await response.Content.ReadFromJsonAsync<WebShareProxyListResponse>(cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("WebShare returned an empty proxy list response.");
-
-        var proxies = payload.Results
-            .Where(r => r.Valid)
-            .Select(r => new ProviderProxyRecord(r.Id, r.ProxyAddress, r.Port, ProxyProtocol.Http, r.Username, r.Password, IsActive: true))
-            .ToList();
 
         return ProviderSyncResult.Ok(proxies);
     }

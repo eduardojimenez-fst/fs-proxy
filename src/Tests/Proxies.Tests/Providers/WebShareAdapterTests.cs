@@ -24,6 +24,18 @@ public sealed class WebShareAdapterTests
         }
     }
 
+    private sealed class SequencedStubHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
+    {
+        private int _index;
+        public List<HttpRequestMessage> Requests { get; } = [];
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request);
+            return Task.FromResult(responses[_index++]);
+        }
+    }
+
     private static (WebShareAdapter Adapter, StubHandler Handler) CreateSut(HttpResponseMessage response)
     {
         var handler = new StubHandler(response);
@@ -85,6 +97,33 @@ public sealed class WebShareAdapterTests
 
         result.Success.ShouldBeFalse();
         result.ErrorMessage.ShouldStartWith("Invalid credentials JSON");
+    }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_FollowPagination_And_MapCountryAndProviderGrouping()
+    {
+        var page1 = new WebShareProxyListResponse(2, "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=2&page_size=100",
+            [new WebShareProxyRecord("ext-1", "user", "pass", "1.2.3.4", 8080, true, "CL")]);
+        var page2 = new WebShareProxyListResponse(2, null,
+            [new WebShareProxyRecord("ext-2", "user", "pass", "5.6.7.8", 8081, true, "AR")]);
+        var handler = new SequencedStubHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(page1) },
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(page2) });
+        var services = new ServiceCollection();
+        services.AddHttpClient("ProxyProvider:WebShare").ConfigurePrimaryHttpMessageHandler(() => handler);
+        var provider = services.BuildServiceProvider();
+        var sut = new WebShareAdapter(provider.GetRequiredService<IHttpClientFactory>());
+        var account = ProviderAccount.Create("WebShare", ProxyProviderType.WebShare, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"ApiKey\":\"key-123\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
+        result.Proxies.Count.ShouldBe(2);
+        handler.Requests.Count.ShouldBe(2);
+        var first = result.Proxies.Single(p => p.ExternalId == "ext-1");
+        first.Country.ShouldBe("CL");
+        first.ProviderGrouping.ShouldBe("Proxy List");
+        result.Proxies.Single(p => p.ExternalId == "ext-2").Country.ShouldBe("AR");
     }
 
     [Fact]
