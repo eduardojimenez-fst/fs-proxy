@@ -234,7 +234,7 @@ function Row({
 }) {
   return (
     <li>
-      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-1 py-3.5 sm:grid-cols-[1.4fr_auto_1.4fr_auto_auto_auto]">
+      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-3 px-1 py-3.5 sm:grid-cols-[1.4fr_auto_1.4fr_auto_auto_auto_auto]">
         <div className="min-w-0">
           <div className="truncate font-mono text-[13px] font-medium">{account.name}</div>
           <div className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.14em] text-[var(--color-muted-foreground)]">
