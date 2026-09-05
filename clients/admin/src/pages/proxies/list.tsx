@@ -196,6 +196,7 @@ export function ProxiesListPage() {
     setStatus("");
     setProviderAccountId("");
     setGeolocationInput("");
+    setKind("");
   };
 
   const providerOptions = useMemo(

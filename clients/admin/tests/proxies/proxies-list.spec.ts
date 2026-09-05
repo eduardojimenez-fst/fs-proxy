@@ -154,4 +154,28 @@ test.describe("proxies list", () => {
 
     await expect.poll(() => new URL(lastUrl).searchParams.get("kind")).toBe("Residential");
   });
+
+  test("clears the ProxyKind filter when clicking Clear filters", async ({ page }) => {
+    await page.route("**/api/v1/proxies/?*", async (route) => {
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([PROXY_RESIDENTIAL])) });
+    });
+
+    await page.goto("/proxies");
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // Apply the kind filter
+    await page.getByTestId("proxies-kind-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: "Residential", exact: true }).click();
+
+    // Verify "Clear filters" button appears
+    const clearButton = page.getByRole("button", { name: "Clear filters" }).first();
+    await expect(clearButton).toBeVisible();
+
+    // Click "Clear filters" to reset all filters including kind
+    await clearButton.click();
+
+    // Verify the "Clear filters" button disappears when no filters are active
+    // This confirms that the kind state was cleared (filtersActive is false)
+    await expect(page.getByRole("button", { name: "Clear filters" })).toHaveCount(0);
+  });
 });
