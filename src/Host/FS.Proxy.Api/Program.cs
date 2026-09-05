@@ -13,6 +13,7 @@ using FSH.Modules.Catalog;
 using FSH.Modules.Tickets;
 using FSH.Modules.Proxies;
 using FSH.Modules.Multitenancy.Features.v1.GetTenantStatus;
+using Microsoft.AspNetCore.DataProtection;
 using System.Reflection;
 using System.Text.Json.Serialization;
 
@@ -93,6 +94,18 @@ builder.AddHeroPlatform(o =>
     o.EnableSse = true;
     o.EnableRealtime = true;
 });
+
+// AddHeroPlatform's caching setup only pins a consistent Data Protection application name
+// (SetApplicationName) when CachingOptions:Redis is configured — without Redis (the checked-in
+// default in both hosts' appsettings.json), this host and FS.Proxy.DbMigrator each fall back to
+// their own auto-computed discriminator (derived from their differing project content-root paths),
+// so credentials DbMigrator's dev-seed encrypts (ProviderAccount.ProtectedCredentials) can never be
+// decrypted here — a real CryptographicException ("key {guid} not found in the key ring"). Pin the
+// same "FSH.Starter" name AddHeroCaching's Redis branch already uses (see FSH.Framework.Caching)
+// unconditionally, so both hosts always agree whether or not Redis ends up configured, and any
+// already-Redis-backed deployment's existing keys stay valid. Must match
+// FS.Proxy.DbMigrator/Program.cs's identical call exactly.
+builder.Services.AddDataProtection().SetApplicationName("FSH.Starter");
 
 // The transactional outbox is framework infrastructure with exactly one owner
 // (EventingDbContext), so the host registers it once for every module (issue #1349).
