@@ -64,7 +64,9 @@ public static class ProviderFileParser
 
             var protocolText = columns[2].Trim();
             var protocol = ProxyProtocol.Http;
-            if (protocolText.Length > 0 && !Enum.TryParse(protocolText, ignoreCase: true, out protocol))
+            if (protocolText.Length > 0 &&
+                (!Enum.TryParse(protocolText, ignoreCase: true, out protocol) ||
+                 !Enum.IsDefined(protocol)))
             {
                 errors.Add(new FileImportRowError(lineNumber,
                     $"\"{protocolText}\" is not a recognized protocol (Http, Https, Socks5)."));
@@ -75,7 +77,8 @@ public static class ProviderFileParser
             ProxyKind? kind = null;
             if (kindText.Length > 0)
             {
-                if (!Enum.TryParse<ProxyKind>(kindText, ignoreCase: true, out var parsedKind))
+                if (!Enum.TryParse<ProxyKind>(kindText, ignoreCase: true, out var parsedKind) ||
+                    !Enum.IsDefined(parsedKind))
                 {
                     errors.Add(new FileImportRowError(lineNumber,
                         $"\"{kindText}\" is not a recognized proxy kind (DataCenter, Residential, Mobile, Dedicated)."));

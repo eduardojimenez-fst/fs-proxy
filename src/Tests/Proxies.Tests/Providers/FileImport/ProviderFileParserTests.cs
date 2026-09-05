@@ -100,6 +100,41 @@ public sealed class ProviderFileParserTests
     }
 
     [Fact]
+    public void Parse_Should_ReportRowError_When_ProtocolIsNumericString()
+    {
+        var csv = $"{Header}\ndc.oxylabs.io,8007,9,u,p,CL,DataCenter";
+
+        var result = ProviderFileParser.Parse(csv);
+
+        result.Records.ShouldBeEmpty();
+        result.Errors.ShouldHaveSingleItem().Message.ShouldContain("protocol");
+    }
+
+    [Fact]
+    public void Parse_Should_ReportRowError_When_ProxyKindIsNumericString()
+    {
+        var csv = $"{Header}\ndc.oxylabs.io,8007,Http,u,p,CL,42";
+
+        var result = ProviderFileParser.Parse(csv);
+
+        result.Records.ShouldBeEmpty();
+        result.Errors.ShouldHaveSingleItem().Message.ShouldContain("proxy kind");
+    }
+
+    [Fact]
+    public void Parse_Should_ReportRowError_When_ColumnCountIsTooFew()
+    {
+        var csv = $"{Header}\ndc.oxylabs.io,8007";
+
+        var result = ProviderFileParser.Parse(csv);
+
+        result.Records.ShouldBeEmpty();
+        var error = result.Errors.ShouldHaveSingleItem();
+        error.LineNumber.ShouldBe(2);
+        error.Message.ShouldContain("column");
+    }
+
+    [Fact]
     public void Parse_Should_Throw_When_FileIsEmpty() =>
         Should.Throw<FormatException>(() => ProviderFileParser.Parse(""));
 
