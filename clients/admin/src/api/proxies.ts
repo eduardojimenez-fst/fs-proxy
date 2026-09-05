@@ -6,6 +6,7 @@ const BASE = "/api/v1/proxies";
 
 export type ProxyProtocol = "Http" | "Https" | "Socks5";
 export type ProxyStatus = "Active" | "Disabled" | "Banned" | "Testing" | "Retired";
+export type ProxyKind = "DataCenter" | "Residential" | "Mobile" | "Dedicated";
 
 export type ProxyDto = {
   id: string;
@@ -21,6 +22,7 @@ export type ProxyDto = {
   lastRenewedAtUtc: string | null;
   geolocation: string | null;
   providerGrouping: string | null;
+  kind: ProxyKind | null;
 };
 
 export type ListProxiesParams = {
@@ -28,6 +30,7 @@ export type ListProxiesParams = {
   status?: ProxyStatus;
   providerAccountId?: string;
   geolocation?: string;
+  kind?: ProxyKind;
   pageNumber?: number;
   pageSize?: number;
 };
@@ -39,6 +42,7 @@ export async function listProxies(params: ListProxiesParams = {}): Promise<Paged
   if (params.status) query.set("status", params.status);
   if (params.providerAccountId) query.set("providerAccountId", params.providerAccountId);
   if (params.geolocation) query.set("geolocation", params.geolocation);
+  if (params.kind) query.set("kind", params.kind);
   for (const tag of params.tags ?? []) query.append("tags", tag);
   return apiFetch<PagedResponse<ProxyDto>>(`${BASE}/?${query.toString()}`);
 }
