@@ -17,6 +17,15 @@ public sealed class SyncProviderAccountFromFileCommandHandler(
     ProxiesDbContext dbContext, IProxySecretProtector protector, IProviderAccountSyncService syncService)
     : ICommandHandler<SyncProviderAccountFromFileCommand, FileImportResult>
 {
+    // Matches every IProxyProviderAdapter's own credential deserialization (BrightDataAdapter,
+    // WebShareAdapter): case-insensitive + camelCase, because the admin UI's Provider Account
+    // dialog shows lowercase-camelCase JSON examples ({"apiToken":...}, {"apiKey":...}) — without
+    // this, a stored {"username":"x","password":"y"} silently deserializes to an all-null record
+    // under System.Text.Json's default case-sensitive matching (declared property names here are
+    // PascalCase), which read as "no default credentials configured" and forced the admin to
+    // re-enter working credentials by hand on every upload.
+    private static readonly JsonSerializerOptions CredentialsJsonOptions = new(JsonSerializerDefaults.Web);
+
     public async ValueTask<FileImportResult> Handle(SyncProviderAccountFromFileCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
@@ -46,7 +55,7 @@ public sealed class SyncProviderAccountFromFileCommandHandler(
             var merged = new FileImportDefaultCredentials(
                 command.DefaultUsername ?? existingUsername,
                 command.DefaultPassword ?? existingPassword);
-            account.UpdateCredentials(protector.Protect(JsonSerializer.Serialize(merged)));
+            account.UpdateCredentials(protector.Protect(JsonSerializer.Serialize(merged, CredentialsJsonOptions)));
         }
 
         ProviderFileParseResult parsed;
@@ -157,7 +166,7 @@ public sealed class SyncProviderAccountFromFileCommandHandler(
     {
         try
         {
-            return JsonSerializer.Deserialize<FileImportDefaultCredentials>(decrypted);
+            return JsonSerializer.Deserialize<FileImportDefaultCredentials>(decrypted, CredentialsJsonOptions);
         }
         catch (JsonException)
         {

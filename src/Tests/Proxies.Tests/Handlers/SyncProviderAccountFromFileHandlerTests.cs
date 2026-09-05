@@ -20,6 +20,7 @@ namespace Proxies.Tests.Handlers;
 public sealed class SyncProviderAccountFromFileHandlerTests
 {
     private const string Header = "Host,Port,Protocol,Username,Password,Geolocation,ProxyKind";
+    private static readonly JsonSerializerOptions CaseInsensitiveJsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     private static FSH.Modules.Proxies.Data.ProxiesDbContext CreateDb() =>
         Proxies.Tests.TestProxiesDbContext.Create(new DbContextOptionsBuilder<FSH.Modules.Proxies.Data.ProxiesDbContext>()
@@ -55,6 +56,33 @@ public sealed class SyncProviderAccountFromFileHandlerTests
     }
 
     [Fact]
+    public async Task Handle_Should_ApplyExistingCredentials_When_StoredAsLowercaseCamelCaseJson()
+    {
+        // Regression test: an admin typing credentials into the "New provider account" dialog
+        // naturally follows the lowercase-camelCase convention every other provider's placeholder
+        // shows (e.g. {"apiKey":"..."}), producing {"username":"...","password":"..."} rather than
+        // the record's own PascalCase property names. Deserializing that without case-insensitive
+        // options (System.Text.Json's default) silently yields an all-null record, which read as
+        // "no default credentials configured" and forced the admin to re-type a working password
+        // by hand on every upload, even though one was already stored.
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create(
+            "Oxylabs - file", ProxyProviderType.Oxylabs, "{\"username\":\"already-stored-user\",\"password\":\"already-stored-pass\"}");
+        db.ProviderAccounts.Add(account);
+        await db.SaveChangesAsync();
+        var csv = $"{Header}\ndc.oxylabs.io,8007,Http,,,CL,DataCenter";
+        var sut = CreateSut(db, new FakeProtector());
+
+        var result = await sut.Handle(
+            new SyncProviderAccountFromFileCommand(account.Id, csv, null, null, null, null), CancellationToken.None);
+
+        result.Created.ShouldBe(1);
+        var proxy = await db.Proxies.SingleAsync();
+        proxy.Username.ShouldBe("already-stored-user");
+        proxy.ProtectedPassword.ShouldBe("already-stored-pass");
+    }
+
+    [Fact]
     public async Task Handle_Should_PersistAndApplyDefaultCredentials_When_RowsOmitThem()
     {
         await using var db = CreateDb();
@@ -72,7 +100,8 @@ public sealed class SyncProviderAccountFromFileHandlerTests
         proxy.Username.ShouldBe("acct-user");
         proxy.ProtectedPassword.ShouldBe("acct-pass");
         var stored = await db.ProviderAccounts.SingleAsync();
-        var storedDefaults = JsonSerializer.Deserialize<FileImportDefaultCredentials>(stored.ProtectedCredentials)!;
+        var storedDefaults = JsonSerializer.Deserialize<FileImportDefaultCredentials>(
+            stored.ProtectedCredentials, CaseInsensitiveJsonOptions)!;
         storedDefaults.Username.ShouldBe("acct-user");
     }
 
@@ -182,7 +211,8 @@ public sealed class SyncProviderAccountFromFileHandlerTests
             new SyncProviderAccountFromFileCommand(account.Id, csv, "u2", null, null, null), CancellationToken.None);
 
         var stored = await db.ProviderAccounts.SingleAsync();
-        var storedDefaults = JsonSerializer.Deserialize<FileImportDefaultCredentials>(stored.ProtectedCredentials)!;
+        var storedDefaults = JsonSerializer.Deserialize<FileImportDefaultCredentials>(
+            stored.ProtectedCredentials, CaseInsensitiveJsonOptions)!;
         storedDefaults.Username.ShouldBe("u2");
         storedDefaults.Password.ShouldBe("p1");
     }
