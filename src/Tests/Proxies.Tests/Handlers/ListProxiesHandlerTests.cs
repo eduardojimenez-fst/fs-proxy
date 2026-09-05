@@ -71,4 +71,24 @@ public sealed class ListProxiesHandlerTests
         result.Items.Select(x => x.Id).ShouldBe([chile.Id]);
         result.Items.Single().Geolocation.ShouldBe("cl");
     }
+
+    [Fact]
+    public async Task Handle_Should_FilterByKind()
+    {
+        await using var db = CreateDb();
+        var account = ProviderAccount.Create("Manual", ProxyProviderType.Manual, "protected:x");
+        var dataCenter = Proxy.Create(account.Id, "1.1.1.1", 80, ProxyProtocol.Http, null, null, null,
+            geolocation: null, providerGrouping: null, kind: ProxyKind.DataCenter);
+        var residential = Proxy.Create(account.Id, "2.2.2.2", 80, ProxyProtocol.Http, null, null, null,
+            geolocation: null, providerGrouping: null, kind: ProxyKind.Residential);
+        db.ProviderAccounts.Add(account);
+        db.Proxies.AddRange(dataCenter, residential);
+        await db.SaveChangesAsync();
+        var sut = new ListProxiesQueryHandler(db);
+
+        var result = await sut.Handle(new ListProxiesQuery(null, null, null, Kind: ProxyKind.DataCenter), CancellationToken.None);
+
+        result.Items.Select(x => x.Id).ShouldBe([dataCenter.Id]);
+        result.Items.Single().Kind.ShouldBe(ProxyKind.DataCenter);
+    }
 }

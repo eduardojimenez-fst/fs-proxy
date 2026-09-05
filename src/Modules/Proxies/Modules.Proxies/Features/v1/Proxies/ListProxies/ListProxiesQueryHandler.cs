@@ -25,6 +25,7 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
             q = q.Where(p => p.Geolocation != null && p.Geolocation.ToUpper() == normalizedGeolocation);
 #pragma warning restore CA1862, CA1304, CA1311
         }
+        if (query.Kind is { } kind) q = q.Where(p => p.Kind == kind);
         if (query.Tags is { Count: > 0 })
         {
             var normalized = query.Tags.Select(Tag.Normalize).ToList();
@@ -50,7 +51,7 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
             p.Id, p.Host, p.Port, p.Protocol, p.Status,
             p.ProviderAccountId, accountNames[p.ProviderAccountId].Name, accountNames[p.ProviderAccountId].ProviderType,
             tagsByProxy.Where(t => t.ProxyId == p.Id).Select(t => t.Name).ToList(),
-            p.CreatedAtUtc, p.LastRenewedAtUtc, p.Geolocation, p.ProviderGrouping)).ToList();
+            p.CreatedAtUtc, p.LastRenewedAtUtc, p.Geolocation, p.ProviderGrouping, p.Kind)).ToList();
 
         return new PagedResponse<ProxyDto>
         {
