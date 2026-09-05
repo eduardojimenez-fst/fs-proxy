@@ -18,6 +18,13 @@ const PROXY_CL = {
   lastRenewedAtUtc: null,
 };
 
+const PROXY_RESIDENTIAL = {
+  ...PROXY_CL,
+  id: "22222222-2222-2222-2222-222222222222",
+  host: "10.0.0.6",
+  kind: "Residential",
+};
+
 const TAG_CATEGORIES = [
   { id: "cat-1", name: "country", values: ["CL", "AR"] },
   { id: "cat-2", name: "entityType", values: ["Tender", "PurchaseOrder"] },
@@ -129,5 +136,46 @@ test.describe("proxies list", () => {
     await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByRole("listitem").getByText("Http · 🇨🇱 CL", { exact: true })).toBeVisible();
 
+  });
+
+  test("filters by ProxyKind", async ({ page }) => {
+    let lastUrl = "";
+    await page.route("**/api/v1/proxies/?*", async (route) => {
+      lastUrl = route.request().url();
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([PROXY_RESIDENTIAL])) });
+    });
+
+    await page.goto("/proxies");
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("listitem").getByText("Http · 🇨🇱 CL · Residential", { exact: true })).toBeVisible();
+
+    await page.getByTestId("proxies-kind-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: "Residential", exact: true }).click();
+
+    await expect.poll(() => new URL(lastUrl).searchParams.get("kind")).toBe("Residential");
+  });
+
+  test("clears the ProxyKind filter when clicking Clear filters", async ({ page }) => {
+    await page.route("**/api/v1/proxies/?*", async (route) => {
+      await route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(paged([PROXY_RESIDENTIAL])) });
+    });
+
+    await page.goto("/proxies");
+    await expect(page.getByRole("heading", { name: "Proxies", exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // Apply the kind filter
+    await page.getByTestId("proxies-kind-select").getByRole("button").click();
+    await page.getByRole("menuitem", { name: "Residential", exact: true }).click();
+
+    // Verify "Clear filters" button appears
+    const clearButton = page.getByRole("button", { name: "Clear filters" }).first();
+    await expect(clearButton).toBeVisible();
+
+    // Click "Clear filters" to reset all filters including kind
+    await clearButton.click();
+
+    // Verify the "Clear filters" button disappears when no filters are active
+    // This confirms that the kind state was cleared (filtersActive is false)
+    await expect(page.getByRole("button", { name: "Clear filters" })).toHaveCount(0);
   });
 });

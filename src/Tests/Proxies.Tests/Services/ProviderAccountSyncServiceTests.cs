@@ -103,11 +103,12 @@ public sealed class ProviderAccountSyncServiceTests
     }
 
     [Fact]
-    public async Task SyncAsync_Should_PropagateGeolocationAndProviderGrouping_OnCreateAndUpdate()
+    public async Task SyncAsync_Should_PropagateGeolocationProviderGroupingAndKind_OnCreateAndUpdate()
     {
         await using var db = CreateDb();
         var account = ProviderAccount.Create("BrightData", ProxyProviderType.BrightData, "{}");
-        var updatingProxy = Proxy.Create(account.Id, "old-host", 1111, ProxyProtocol.Http, null, null, "ext-existing", "us", "old-zone");
+        var updatingProxy = Proxy.Create(account.Id, "old-host", 1111, ProxyProtocol.Http, null, null, "ext-existing",
+            "us", "old-zone", ProxyKind.Residential);
         db.ProviderAccounts.Add(account);
         db.Proxies.Add(updatingProxy);
         await db.SaveChangesAsync();
@@ -117,8 +118,8 @@ public sealed class ProviderAccountSyncServiceTests
         adapter.SupportsSync.Returns(true);
         adapter.SyncProxiesAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(ProviderSyncResult.Ok([
-                new ProviderProxyRecord("ext-existing", "new-ip", 2222, ProxyProtocol.Http, "u", "p", true, "ar", "zone1new"),
-                new ProviderProxyRecord("ext-new", "9.9.9.9", 4444, ProxyProtocol.Http, "u2", "p2", true, "cl", "zone2")]));
+                new ProviderProxyRecord("ext-existing", "new-ip", 2222, ProxyProtocol.Http, "u", "p", true, "ar", "zone1new", ProxyKind.DataCenter),
+                new ProviderProxyRecord("ext-new", "9.9.9.9", 4444, ProxyProtocol.Http, "u2", "p2", true, "cl", "zone2", ProxyKind.Mobile)]));
         var factory = Substitute.For<IProxyProviderAdapterFactory>();
         factory.GetAdapter(ProxyProviderType.BrightData).Returns(adapter);
 
@@ -129,8 +130,10 @@ public sealed class ProviderAccountSyncServiceTests
         var updated = await db.Proxies.SingleAsync(p => p.ExternalId == "ext-existing");
         updated.Geolocation.ShouldBe("ar");
         updated.ProviderGrouping.ShouldBe("zone1new");
+        updated.Kind.ShouldBe(ProxyKind.DataCenter);
         var created = await db.Proxies.SingleAsync(p => p.ExternalId == "ext-new");
         created.Geolocation.ShouldBe("cl");
         created.ProviderGrouping.ShouldBe("zone2");
+        created.Kind.ShouldBe(ProxyKind.Mobile);
     }
 }

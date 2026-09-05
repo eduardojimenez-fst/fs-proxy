@@ -67,40 +67,52 @@ public sealed class ProviderAccountSyncService(
             return 0;
         }
 
+        var (created, updated, retired) = await ReconcileAsync(account, result.Proxies, cancellationToken).ConfigureAwait(false);
+
+        account.RecordSyncResult(success: true, statusMessage: $"Synced {result.Proxies.Count} proxies.");
+        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        return created + updated + retired;
+    }
+
+    public async Task<(int Created, int Updated, int Retired)> ReconcileAsync(
+        ProviderAccount account, IReadOnlyList<ProviderProxyRecord> records, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(account);
+        ArgumentNullException.ThrowIfNull(records);
+
         var existingProxies = await dbContext.Proxies
-            .Where(p => p.ProviderAccountId == providerAccountId && p.ExternalId != null)
+            .Where(p => p.ProviderAccountId == account.Id && p.ExternalId != null)
             .ToListAsync(cancellationToken).ConfigureAwait(false);
         var byExternalId = existingProxies.ToDictionary(p => p.ExternalId!);
-        var incomingExternalIds = result.Proxies.Select(p => p.ExternalId).ToHashSet();
+        var incomingExternalIds = records.Select(p => p.ExternalId).ToHashSet();
 
-        int touched = 0;
-        foreach (var record in result.Proxies)
+        int created = 0, updated = 0;
+        foreach (var record in records)
         {
             if (byExternalId.TryGetValue(record.ExternalId, out var existing))
             {
                 existing.UpdateConnection(record.Host, record.Port, record.Protocol, record.Username,
                     record.Password is null ? null : protector.Protect(record.Password),
-                    record.Geolocation, record.ProviderGrouping);
+                    record.Geolocation, record.ProviderGrouping, record.Kind);
+                updated++;
             }
             else
             {
-                var created = Proxy.Create(providerAccountId, record.Host, record.Port, record.Protocol, record.Username,
+                var newProxy = Proxy.Create(account.Id, record.Host, record.Port, record.Protocol, record.Username,
                     record.Password is null ? null : protector.Protect(record.Password), record.ExternalId,
-                    record.Geolocation, record.ProviderGrouping);
-                dbContext.Proxies.Add(created);
+                    record.Geolocation, record.ProviderGrouping, record.Kind);
+                dbContext.Proxies.Add(newProxy);
+                created++;
             }
-
-            touched++;
         }
 
+        int retired = 0;
         foreach (var stale in existingProxies.Where(p => !incomingExternalIds.Contains(p.ExternalId!) && p.Status != ProxyStatus.Retired))
         {
             stale.SetStatus(ProxyStatus.Retired);
-            touched++;
+            retired++;
         }
 
-        account.RecordSyncResult(success: true, statusMessage: $"Synced {result.Proxies.Count} proxies.");
-        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        return touched;
+        return (created, updated, retired);
     }
 }

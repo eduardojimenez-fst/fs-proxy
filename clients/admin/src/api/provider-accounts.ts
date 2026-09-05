@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/api-client";
 import type { PagedResponse } from "@/lib/api-types";
+import type { ProxyKind } from "./proxies";
 
 const BASE = "/api/v1/proxies/provider-accounts";
 
@@ -43,4 +44,28 @@ export async function deleteProviderAccount(id: string, options: { force?: boole
 /** Triggers an immediate sync; returns the number of proxies synced. */
 export async function syncProviderAccountNow(id: string): Promise<number> {
   return apiFetch<number>(`${BASE}/${id}/sync`, { method: "POST" });
+}
+
+export type FileImportRowError = { lineNumber: number; message: string };
+export type FileImportResult = { created: number; updated: number; retired: number; errors: FileImportRowError[] };
+
+export type SyncProviderAccountFromFileInput = {
+  file: File;
+  defaultUsername?: string;
+  defaultPassword?: string;
+  defaultGeolocation?: string;
+  defaultProxyKind?: ProxyKind;
+};
+
+export async function syncProviderAccountFromFile(
+  id: string,
+  input: SyncProviderAccountFromFileInput,
+): Promise<FileImportResult> {
+  const formData = new FormData();
+  formData.set("file", input.file);
+  if (input.defaultUsername) formData.set("defaultUsername", input.defaultUsername);
+  if (input.defaultPassword) formData.set("defaultPassword", input.defaultPassword);
+  if (input.defaultGeolocation) formData.set("defaultGeolocation", input.defaultGeolocation);
+  if (input.defaultProxyKind) formData.set("defaultProxyKind", input.defaultProxyKind);
+  return apiFetch<FileImportResult>(`${BASE}/${id}/sync-from-file`, { method: "POST", body: formData });
 }

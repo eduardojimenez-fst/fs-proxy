@@ -3,6 +3,7 @@ using System;
 using FSH.Modules.Proxies.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace FS.Proxy.Migrations.PostgreSQL.Proxies
 {
     [DbContext(typeof(ProxiesDbContext))]
-    partial class ProxiesDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260905030307_AddProxyKind")]
+    partial class AddProxyKind
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

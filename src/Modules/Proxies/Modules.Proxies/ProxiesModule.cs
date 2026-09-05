@@ -36,6 +36,7 @@ using FSH.Modules.Proxies.Features.v1.ProviderAccounts.CreateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.DeleteProviderAccount;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.GetProviderAccountById;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.ListProviderAccounts;
+using FSH.Modules.Proxies.Features.v1.ProviderAccounts.SyncProviderAccountFromFile;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.SyncProviderAccountNow;
 using FSH.Modules.Proxies.Features.v1.ProviderAccounts.UpdateProviderAccount;
 using FSH.Modules.Proxies.Features.v1.TagCategories.AddTagCategoryValue;
@@ -186,6 +187,7 @@ public sealed class ProxiesModule : IModule
         group.MapGetProviderAccountByIdEndpoint();
         group.MapListProviderAccountsEndpoint();
         group.MapSyncProviderAccountNowEndpoint();
+        group.MapSyncProviderAccountFromFileEndpoint();
 
         group.MapCreateManualProxyEndpoint();
         group.MapUpdateManualProxyEndpoint();
