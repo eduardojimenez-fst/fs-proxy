@@ -13,7 +13,9 @@ using FSH.Modules.Catalog;
 using FSH.Modules.Tickets;
 using FSH.Modules.Proxies;
 using FSH.Modules.Multitenancy.Features.v1.GetTenantStatus;
+using FS.Proxy.Migrations.PostgreSQL.DataProtection;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
 using System.Reflection;
 using System.Text.Json.Serialization;
 
@@ -95,17 +97,23 @@ builder.AddHeroPlatform(o =>
     o.EnableRealtime = true;
 });
 
-// AddHeroPlatform's caching setup only pins a consistent Data Protection application name
-// (SetApplicationName) when CachingOptions:Redis is configured — without Redis (the checked-in
-// default in both hosts' appsettings.json), this host and FS.Proxy.DbMigrator each fall back to
-// their own auto-computed discriminator (derived from their differing project content-root paths),
-// so credentials DbMigrator's dev-seed encrypts (ProviderAccount.ProtectedCredentials) can never be
-// decrypted here — a real CryptographicException ("key {guid} not found in the key ring"). Pin the
-// same "FSH.Starter" name AddHeroCaching's Redis branch already uses (see FSH.Framework.Caching)
-// unconditionally, so both hosts always agree whether or not Redis ends up configured, and any
-// already-Redis-backed deployment's existing keys stay valid. Must match
-// FS.Proxy.DbMigrator/Program.cs's identical call exactly.
-builder.Services.AddDataProtection().SetApplicationName("FSH.Starter");
+// FS.Proxy.DbMigrator is normally run standalone (see README-CLI.md / "Migrations / seed, separate
+// step"), outside AppHost's automatic Redis connection-string injection — so even with the same
+// Data Protection application name pinned on both hosts (see below), this host (Redis-backed, when
+// Redis IS configured for it) and the migrator (falling back to local file storage) can end up with
+// two entirely different key stores: credentials the migrator's dev-seed encrypts become
+// permanently undecryptable here ("CryptographicException: key {guid} not found in the key ring").
+// Persisting keys to Postgres — the one store both hosts always share regardless of how either is
+// launched — fixes the storage-location mismatch; SetApplicationName still matches
+// FS.Proxy.DbMigrator/Program.cs's identical call exactly, and is required in addition to (not
+// instead of) the shared store, since Data Protection isolates keys by application name even within
+// one physical store. This host never migrates the table itself (DbMigrator owns all schema
+// changes) — it only reads/writes rows once DbMigrator has created it.
+builder.Services.AddDbContext<DataProtectionKeysDbContext>(o =>
+    o.UseNpgsql(builder.Configuration["DatabaseOptions:ConnectionString"]));
+builder.Services.AddDataProtection()
+    .SetApplicationName("FSH.Starter")
+    .PersistKeysToDbContext<DataProtectionKeysDbContext>();
 
 // The transactional outbox is framework infrastructure with exactly one owner
 // (EventingDbContext), so the host registers it once for every module (issue #1349).

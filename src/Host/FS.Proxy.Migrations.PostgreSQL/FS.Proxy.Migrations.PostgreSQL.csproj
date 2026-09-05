@@ -9,6 +9,12 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <!-- DataProtectionKeysDbContext (DataProtection\) persists Data Protection keys to Postgres —
+	       the one store both FS.Proxy.Api and the separately-run FS.Proxy.DbMigrator always share. -->
+	  <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
+	</ItemGroup>
+
+	<ItemGroup>
 	  <ProjectReference Include="..\..\BuildingBlocks\Persistence\Persistence.csproj" />
 	  <ProjectReference Include="..\..\Modules\Auditing\Modules.Auditing\Modules.Auditing.csproj" />
 	  <ProjectReference Include="..\..\Modules\Identity\Modules.Identity\Modules.Identity.csproj" />
@@ -24,6 +30,7 @@
 	</ItemGroup>
 
 	<ItemGroup>
+	  <Folder Include="DataProtection\" />
 	  <Folder Include="Audit\" />
 	  <Folder Include="MultiTenancy\" />
 	  <Folder Include="Billing\" />
