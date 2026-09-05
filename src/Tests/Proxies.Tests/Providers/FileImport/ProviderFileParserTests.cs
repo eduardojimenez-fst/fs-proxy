@@ -135,6 +135,20 @@ public sealed class ProviderFileParserTests
     }
 
     [Fact]
+    public void Parse_Should_ReportRowError_When_ExternalIdDuplicatesAnEarlierRowInTheSameFile()
+    {
+        var csv = $"{Header}\n89.249.195.245,7000,Http,u,p,,\n89.249.195.245,7000,Http,u2,p2,,";
+
+        var result = ProviderFileParser.Parse(csv);
+
+        result.Records.ShouldHaveSingleItem().ExternalId.ShouldBe("file:89.249.195.245:7000");
+        var error = result.Errors.ShouldHaveSingleItem();
+        error.LineNumber.ShouldBe(3);
+        error.Message.ShouldContain("Duplicate");
+        error.Message.ShouldContain("line 2");
+    }
+
+    [Fact]
     public void Parse_Should_Throw_When_FileIsEmpty() =>
         Should.Throw<FormatException>(() => ProviderFileParser.Parse(""));
 

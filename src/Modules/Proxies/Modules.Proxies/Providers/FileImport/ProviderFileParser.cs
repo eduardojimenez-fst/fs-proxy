@@ -31,11 +31,13 @@ public static class ProviderFileParser
         if (!header.SequenceEqual(ExpectedHeader, StringComparer.OrdinalIgnoreCase))
         {
             throw new FormatException(
-                $"Expected header \"{string.Join(',', ExpectedHeader)}\", got \"{lines[0]}\".");
+                $"Expected header \"{string.Join(',', ExpectedHeader)}\" ({ExpectedHeader.Length} columns), "
+                + $"but the first line has {header.Length} column(s) and does not match.");
         }
 
         var records = new List<ProviderProxyRecord>();
         var errors = new List<FileImportRowError>();
+        var firstLineForExternalId = new Dictionary<string, int>(StringComparer.Ordinal);
 
         for (int i = 1; i < lines.Length; i++)
         {
@@ -61,6 +63,15 @@ public static class ProviderFileParser
                 errors.Add(new FileImportRowError(lineNumber, $"\"{portText}\" is not a valid port."));
                 continue;
             }
+
+            var externalId = $"file:{host}:{port}";
+            if (firstLineForExternalId.TryGetValue(externalId, out var firstLine))
+            {
+                errors.Add(new FileImportRowError(lineNumber,
+                    $"Duplicate row for {host}:{port} (first seen on line {firstLine}) — skipped."));
+                continue;
+            }
+            firstLineForExternalId[externalId] = lineNumber;
 
             var protocolText = columns[2].Trim();
             var protocol = ProxyProtocol.Http;
@@ -88,7 +99,7 @@ public static class ProviderFileParser
             }
 
             records.Add(new ProviderProxyRecord(
-                ExternalId: $"file:{host}:{port}", Host: host, Port: port, Protocol: protocol,
+                ExternalId: externalId, Host: host, Port: port, Protocol: protocol,
                 Username: NullIfBlank(columns[3]), Password: NullIfBlank(columns[4]), IsActive: true,
                 Geolocation: NullIfBlank(columns[5]), ProviderGrouping: null, Kind: kind));
         }
