@@ -80,13 +80,13 @@ public sealed class ProviderAccountSyncService(
             {
                 existing.UpdateConnection(record.Host, record.Port, record.Protocol, record.Username,
                     record.Password is null ? null : protector.Protect(record.Password),
-                    record.Geolocation, record.ProviderGrouping);
+                    record.Geolocation, record.ProviderGrouping, record.Kind);
             }
             else
             {
                 var created = Proxy.Create(providerAccountId, record.Host, record.Port, record.Protocol, record.Username,
                     record.Password is null ? null : protector.Protect(record.Password), record.ExternalId,
-                    record.Geolocation, record.ProviderGrouping);
+                    record.Geolocation, record.ProviderGrouping, record.Kind);
                 dbContext.Proxies.Add(created);
             }
 
