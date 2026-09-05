@@ -39,16 +39,6 @@ const STATUS_OPTIONS: { value: ProxyStatus; label: string }[] = [
 // Desktop grid template — shared by header + rows.
 const DESKTOP_COLS = "grid-cols-[24px_1.3fr_100px_1.2fr_1.4fr_120px]";
 
-// ISO 3166-1 alpha-2 -> regional indicator flag emoji (e.g. "CL" -> 🇨🇱). Provider country codes
-// are always 2 letters (BrightData lowercase via MaxMind, WebShare uppercase) — anything else
-// falls back to no flag rather than rendering garbage.
-function countryFlag(countryCode: string): string {
-  const upper = countryCode.toUpperCase();
-  if (!/^[A-Z]{2}$/.test(upper)) return "";
-  const codePoints = [...upper].map((c) => 127397 + c.charCodeAt(0));
-  return String.fromCodePoint(...codePoints);
-}
-
 function describeError(err: unknown): string {
   if (err instanceof ApiRequestError) return err.problem?.detail ?? err.problem?.title ?? err.message;
   if (err instanceof Error) return err.message;
