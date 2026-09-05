@@ -1456,6 +1456,7 @@ export function UploadProviderFileDialog({
         <DialogBody className="space-y-4">
           <Field id="upload-file" label="CSV file" required>
             <input
+              id="upload-file"
               type="file"
               accept=".csv,text/csv"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
