@@ -67,4 +67,23 @@ public sealed class ProxyTests
         proxy.Geolocation.ShouldBe("ar");
         proxy.ProviderGrouping.ShouldBe("new-zone");
     }
+
+    [Fact]
+    public void Create_Should_SetKind_When_Provided()
+    {
+        var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, "ext-1",
+            geolocation: "cl", providerGrouping: "zone1", kind: ProxyKind.DataCenter);
+
+        proxy.Kind.ShouldBe(ProxyKind.DataCenter);
+    }
+
+    [Fact]
+    public void UpdateConnection_Should_UpdateKind()
+    {
+        var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, "ext-1");
+
+        proxy.UpdateConnection("1.2.3.4", 8080, ProxyProtocol.Http, null, null, kind: ProxyKind.Residential);
+
+        proxy.Kind.ShouldBe(ProxyKind.Residential);
+    }
 }
