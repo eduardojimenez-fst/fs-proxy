@@ -20,6 +20,7 @@ import {
   enableProxies,
   listProxies,
   type ProxyDto,
+  type ProxyKind,
   type ProxyStatus,
   type SetProxiesStatusInput,
 } from "@/api/proxies";
@@ -74,6 +75,7 @@ export function ProxiesListPage() {
   const [providerAccountId, setProviderAccountId] = useState("");
   const [geolocationInput, setGeolocationInput] = useState("");
   const [geolocation, setGeolocation] = useState("");
+  const [kind, setKind] = useState<ProxyKind | "">("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagsDialogProxy, setTagsDialogProxy] = useState<ProxyDto | null>(null);
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
@@ -109,7 +111,7 @@ export function ProxiesListPage() {
   // Reset to page 1 whenever a dropdown filter changes.
   useEffect(() => {
     setPageNumber(1);
-  }, [status, providerAccountId]);
+  }, [status, providerAccountId, kind]);
 
   const canUpdate = user?.permissions.includes(ProxiesPermissions.ManualProxies.Update) ?? false;
   const canManageTags = user?.permissions.includes(ProxiesPermissions.Tags.Update) ?? false;
@@ -122,7 +124,7 @@ export function ProxiesListPage() {
   });
 
   const proxiesQuery = useQuery({
-    queryKey: ["proxies", "list", { pageNumber, tags, status, providerAccountId, geolocation }],
+    queryKey: ["proxies", "list", { pageNumber, tags, status, providerAccountId, geolocation, kind }],
     queryFn: () =>
       listProxies({
         pageNumber,
@@ -131,6 +133,7 @@ export function ProxiesListPage() {
         status: status || undefined,
         providerAccountId: providerAccountId || undefined,
         geolocation: geolocation || undefined,
+        kind: kind || undefined,
       }),
     placeholderData: keepPreviousData,
   });
@@ -183,7 +186,7 @@ export function ProxiesListPage() {
     });
   }
 
-  const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "" || geolocation !== "";
+  const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "" || geolocation !== "" || kind !== "";
 
   const clearFilters = () => {
     setTags([]);
@@ -335,6 +338,22 @@ export function ProxiesListPage() {
           placeholder="Any account"
           minWidth="12rem"
         />
+
+        <div data-testid="proxies-kind-select">
+          <Select
+            label="Kind"
+            value={kind}
+            onChange={(v) => setKind(v as ProxyKind | "")}
+            options={[
+              { value: "DataCenter", label: "DataCenter" },
+              { value: "Residential", label: "Residential" },
+              { value: "Mobile", label: "Mobile" },
+              { value: "Dedicated", label: "Dedicated" },
+            ]}
+            placeholder="Any kind"
+            minWidth="9rem"
+          />
+        </div>
 
         {filtersActive && (
           <Button variant="ghost" size="sm" onClick={clearFilters}>
@@ -549,6 +568,7 @@ function ProxyDesktopRow({
           </span>
           <span className="block truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
             {proxy.geolocation ? `${proxy.protocol} · ${countryFlag(proxy.geolocation)} ${proxy.geolocation}` : proxy.protocol}
+            {proxy.kind ? ` · ${proxy.kind}` : ""}
           </span>
         </div>
         <div>
@@ -644,7 +664,8 @@ function ProxyMobileCard({
             <p className="mt-0.5 truncate text-[11px] text-[var(--color-muted-foreground)]">
               {proxy.providerAccountName} (
               {proxy.providerGrouping ? `${proxy.providerType} · ${proxy.providerGrouping}` : proxy.providerType}
-              {proxy.geolocation ? `, ${countryFlag(proxy.geolocation)} ${proxy.geolocation}` : ""})
+              {proxy.geolocation ? `, ${countryFlag(proxy.geolocation)} ${proxy.geolocation}` : ""}
+              {proxy.kind ? `, ${proxy.kind}` : ""})
             </p>
           </div>
         </div>
