@@ -85,6 +85,15 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["DatabaseOptions:ConnectionS
     return 1;
 }
 
+// The Data Protection keys table must exist BEFORE the full host is built: something inside the
+// large DI graph AddModules/AddHeroPlatform assembles below eagerly reads the key ring during
+// host.StartAsync() — earlier than this file's own Step 0/1/2 migration flow ever gets a chance to
+// run — so migrating it as part of that later flow was too late and crashed with "relation
+// DataProtectionKeys does not exist" before a single log line of this migrator's own output
+// appeared. A throwaway logger + this file's own Postgres-ready wait (Postgres may still be cold-
+// starting) keep this self-contained and independent of the full host.
+await BootstrapDataProtectionKeysTableAsync(builder.Configuration["DatabaseOptions:ConnectionString"]!).ConfigureAwait(false);
+
 // Mirror the API's mediator registration so module handlers wire correctly —
 // some module DbInitializers depend on services that mediator pipelines build.
 builder.Services.AddMediator(o =>
@@ -219,15 +228,6 @@ try
         .AcquireAsync(connectionString, logger, CancellationToken.None)
         .ConfigureAwait(false);
     await Console.Out.WriteLineAsync("[migrator] advisory lock acquired").ConfigureAwait(false);
-
-    // ── Step 0c — Data Protection keys table ──────────────────────────────
-    // Global infrastructure, not tenant data — migrated unconditionally and independently of the
-    // per-tenant/per-module loop below (mirrors the tenant catalog's own Step 1 treatment).
-    using (var scope = host.Services.CreateScope())
-    {
-        var dataProtectionDb = scope.ServiceProvider.GetRequiredService<DataProtectionKeysDbContext>();
-        await dataProtectionDb.Database.MigrateAsync(CancellationToken.None).ConfigureAwait(false);
-    }
 
     // ── Step 1 — tenant catalog ───────────────────────────────────────────
     // Always applied first: the per-tenant migrator below reads every tenant out of this database.
@@ -370,6 +370,21 @@ finally
     // Flush logging buffers + run host shutdown so the operator (and any
     // CI log collector) sees the final lines before the process exits.
     await host.StopAsync().ConfigureAwait(false);
+}
+
+static async Task BootstrapDataProtectionKeysTableAsync(string connectionString)
+{
+    using var bootstrapLoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddConsole());
+    var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("DataProtectionBootstrap");
+    await Console.Out.WriteLineAsync("[migrator] waiting for postgres (Data Protection bootstrap)…").ConfigureAwait(false);
+    await PostgresMigratorLock.WaitForDatabaseAsync(connectionString, bootstrapLogger, CancellationToken.None)
+        .ConfigureAwait(false);
+    var dataProtectionOptions = new DbContextOptionsBuilder<DataProtectionKeysDbContext>()
+        .UseNpgsql(connectionString)
+        .Options;
+    await using var dataProtectionDb = new DataProtectionKeysDbContext(dataProtectionOptions);
+    await dataProtectionDb.Database.MigrateAsync(CancellationToken.None).ConfigureAwait(false);
+    await Console.Out.WriteLineAsync("[migrator] Data Protection keys table ready").ConfigureAwait(false);
 }
 
 static async Task LogConnectionIdentityAsync(string connectionString)
