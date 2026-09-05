@@ -19,6 +19,7 @@ import {
   type ProviderAccountDto,
 } from "@/api/provider-accounts";
 import { ProviderAccountDialog } from "@/components/proxies/provider-account-dialog";
+import { UploadProviderFileDialog } from "@/components/proxies/upload-provider-file-dialog";
 
 const PAGE_SIZE = 20;
 
@@ -34,6 +35,7 @@ export function ProviderAccountsListPage() {
 
   const [pageNumber, setPageNumber] = useState(1);
   const [dialogState, setDialogState] = useState<{ open: boolean; account?: ProviderAccountDto }>({ open: false });
+  const [uploadState, setUploadState] = useState<{ open: boolean; account?: ProviderAccountDto }>({ open: false });
   const [busyId, setBusyId] = useState<string | null>(null);
   const [deleteState, setDeleteState] = useState<{
     open: boolean;
@@ -158,6 +160,7 @@ export function ProviderAccountsListPage() {
               onSync={() => syncMutation.mutate(account.id)}
               onEdit={() => setDialogState({ open: true, account })}
               onDelete={() => void startDelete(account)}
+              onUploadFile={() => setUploadState({ open: true, account })}
             />
           ))}
         </ol>
@@ -182,6 +185,12 @@ export function ProviderAccountsListPage() {
         open={dialogState.open}
         account={dialogState.account}
         onClose={() => setDialogState({ open: false })}
+      />
+
+      <UploadProviderFileDialog
+        open={uploadState.open}
+        account={uploadState.account ?? null}
+        onClose={() => setUploadState({ open: false })}
       />
 
       <ConfirmDialog
@@ -212,6 +221,7 @@ function Row({
   onSync,
   onEdit,
   onDelete,
+  onUploadFile,
 }: {
   account: ProviderAccountDto;
   busy: boolean;
@@ -220,6 +230,7 @@ function Row({
   onSync: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onUploadFile: () => void;
 }) {
   return (
     <li>
@@ -243,6 +254,14 @@ function Row({
         {canUpdate ? (
           <Button variant="outline" size="sm" onClick={onSync} disabled={busy}>
             <Send className="mr-1 h-3.5 w-3.5" /> Sync now
+          </Button>
+        ) : (
+          <span className="hidden sm:block" />
+        )}
+
+        {canUpdate ? (
+          <Button variant="outline" size="sm" onClick={onUploadFile} aria-label={`Upload file for ${account.name}`}>
+            Upload file
           </Button>
         ) : (
           <span className="hidden sm:block" />
