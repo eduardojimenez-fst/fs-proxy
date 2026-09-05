@@ -1,6 +1,6 @@
 # Provider File Import — Design Spec
 
-Status: Draft
+Status: Approved
 Date: 2026-09-04
 Author: Claude Sonnet 5 (with Eduardo Jimenez)
 Related: `docs/superpowers/specs/2026-09-02-proxy-management-service-design.md` (parent module),
