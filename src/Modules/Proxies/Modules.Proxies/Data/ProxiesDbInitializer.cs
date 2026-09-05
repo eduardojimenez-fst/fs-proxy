@@ -69,13 +69,16 @@ public sealed partial class ProxiesDbInitializer(
         var brightDataSection = configuration.GetSection("Seed:ProxyProviders:BrightData");
         var apiToken = brightDataSection["ApiToken"];
         var zone = brightDataSection["Zone"];
-        if (!string.IsNullOrWhiteSpace(apiToken) && !string.IsNullOrWhiteSpace(zone))
+        var customerId = brightDataSection["CustomerId"];
+        var gatewayPort = brightDataSection.GetValue<int?>("GatewayPort");
+        if (!string.IsNullOrWhiteSpace(apiToken) && !string.IsNullOrWhiteSpace(zone)
+            && !string.IsNullOrWhiteSpace(customerId) && gatewayPort is not null)
         {
             bool exists = await dbContext.ProviderAccounts
                 .AnyAsync(x => x.Name == BrightDataDevAccountName, cancellationToken).ConfigureAwait(false);
             if (!exists)
             {
-                var credentials = JsonSerializer.Serialize(new BrightDataCredentials(apiToken, zone));
+                var credentials = JsonSerializer.Serialize(new BrightDataCredentials(apiToken, zone, customerId, gatewayPort.Value));
                 var account = ProviderAccount.Create(BrightDataDevAccountName, ProxyProviderType.BrightData, protector.Protect(credentials));
                 dbContext.ProviderAccounts.Add(account);
                 LogSeededDevProviderAccount(logger, BrightDataDevAccountName);

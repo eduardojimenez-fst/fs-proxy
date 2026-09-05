@@ -58,11 +58,11 @@ public sealed class BrightDataAdapterTests
 
         result.Success.ShouldBeTrue();
         result.Proxies.Count.ShouldBe(2);
-        var first = result.Proxies.Single(p => p.Host == "brd.superproxy.io" && p.Port == 44445 && p.Country == "cl");
+        var first = result.Proxies.Single(p => p.Host == "brd.superproxy.io" && p.Port == 44445 && p.Geolocation == "cl");
         first.Username.ShouldBe("brd-customer-cust1-zone-zone1-ip-9.9.9.9");
         first.Password.ShouldBe("zone-pass");
         first.ProviderGrouping.ShouldBe("zone1");
-        result.Proxies.Single(p => p.Country == "ar").Username.ShouldBe("brd-customer-cust1-zone-zone1-ip-8.8.8.8");
+        result.Proxies.Single(p => p.Geolocation == "ar").Username.ShouldBe("brd-customer-cust1-zone-zone1-ip-8.8.8.8");
         handler.Requests[0].RequestUri!.ToString().ShouldContain("/zone?zone=zone1");
         handler.Requests[1].RequestUri!.ToString().ShouldContain("/zone/ips?zone=zone1");
         handler.Requests[0].Headers.Authorization!.ToString().ShouldBe("Bearer token-1");
@@ -84,13 +84,13 @@ public sealed class BrightDataAdapterTests
         var pool = result.Proxies.Single();
         pool.Username.ShouldBe("brd-customer-cust1-zone-zone1");
         pool.Password.ShouldBe("zone-pass");
-        pool.Country.ShouldBe("cl");
+        pool.Geolocation.ShouldBe("cl");
         pool.ProviderGrouping.ShouldBe("zone1");
         pool.ExternalId.ShouldBe("zone1:pool");
     }
 
     [Fact]
-    public async Task SyncProxiesAsync_Should_LeaveCountryNull_When_ZonePlanCountryIsMultiValued()
+    public async Task SyncProxiesAsync_Should_LeaveGeolocationNull_When_ZonePlanCountryIsMultiValued()
     {
         var rotatingResponse = new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("Wrong zone plan") };
         var (sut, _) = CreateSut(ZoneConfigResponse("zone-pass", country: "ar us"), rotatingResponse);
@@ -98,7 +98,7 @@ public sealed class BrightDataAdapterTests
 
         var result = await sut.SyncProxiesAsync(account, ValidCredentials, CancellationToken.None);
 
-        result.Proxies.Single().Country.ShouldBeNull();
+        result.Proxies.Single().Geolocation.ShouldBeNull();
     }
 
     [Fact]
@@ -165,7 +165,7 @@ public sealed class BrightDataAdapterTests
         var result = await sut.SyncProxiesAsync(account, ValidCredentials, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        result.Proxies.Single().Country.ShouldBe("cl");
+        result.Proxies.Single().Geolocation.ShouldBe("cl");
     }
 
     [Fact]
@@ -204,7 +204,7 @@ public sealed class BrightDataAdapterTests
     }
 
     [Fact]
-    public async Task SyncProxiesAsync_Should_LeaveCountryNull_When_RotatingZonePlanIsMissing()
+    public async Task SyncProxiesAsync_Should_LeaveGeolocationNull_When_RotatingZonePlanIsMissing()
     {
         // "plan" absent entirely (not just its sub-fields) — Plan is a non-nullable record type,
         // so this can only be produced via a raw JSON literal, not the C# fixture helper.
@@ -220,7 +220,7 @@ public sealed class BrightDataAdapterTests
         var result = await sut.SyncProxiesAsync(account, ValidCredentials, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        result.Proxies.Single().Country.ShouldBeNull();
+        result.Proxies.Single().Geolocation.ShouldBeNull();
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public sealed class BrightDataAdapterTests
     }
 
     [Fact]
-    public async Task SyncProxiesAsync_Should_NullOutCountry_When_PerIpMaxmindExceedsColumnLength()
+    public async Task SyncProxiesAsync_Should_NullOutGeolocation_When_PerIpMaxmindExceedsColumnLength()
     {
         var ipsResponse = new HttpResponseMessage(HttpStatusCode.OK)
         {
@@ -269,11 +269,11 @@ public sealed class BrightDataAdapterTests
         var result = await sut.SyncProxiesAsync(account, ValidCredentials, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        result.Proxies.Single().Country.ShouldBeNull();
+        result.Proxies.Single().Geolocation.ShouldBeNull();
     }
 
     [Fact]
-    public async Task SyncProxiesAsync_Should_NullOutCountry_When_PoolCountryExceedsColumnLength()
+    public async Task SyncProxiesAsync_Should_NullOutGeolocation_When_PoolGeolocationExceedsColumnLength()
     {
         var rotatingResponse = new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent("Wrong zone plan") };
         var (sut, _) = CreateSut(ZoneConfigResponse("zone-pass", defaultCountry: "way-too-long"), rotatingResponse);
@@ -282,6 +282,6 @@ public sealed class BrightDataAdapterTests
         var result = await sut.SyncProxiesAsync(account, ValidCredentials, CancellationToken.None);
 
         result.Success.ShouldBeTrue();
-        result.Proxies.Single().Country.ShouldBeNull();
+        result.Proxies.Single().Geolocation.ShouldBeNull();
     }
 }

@@ -17,6 +17,8 @@ public sealed class ProxiesDbInitializerTests
     {
         ["Seed:ProxyProviders:BrightData:ApiToken"] = "token-123",
         ["Seed:ProxyProviders:BrightData:Zone"] = "datacenter_zone",
+        ["Seed:ProxyProviders:BrightData:CustomerId"] = "hl_c775be64",
+        ["Seed:ProxyProviders:BrightData:GatewayPort"] = "44445",
         ["Seed:ProxyProviders:WebShare:ApiKey"] = "webshare-key-123",
     };
 
@@ -24,6 +26,8 @@ public sealed class ProxiesDbInitializerTests
     {
         ["Seed:ProxyProviders:BrightData:ApiToken"] = "token-123",
         ["Seed:ProxyProviders:BrightData:Zone"] = "datacenter_zone",
+        ["Seed:ProxyProviders:BrightData:CustomerId"] = "hl_c775be64",
+        ["Seed:ProxyProviders:BrightData:GatewayPort"] = "44445",
     };
 
     private static ProxiesDbContext CreateDb() =>
@@ -72,6 +76,22 @@ public sealed class ProxiesDbInitializerTests
 
         (await db.ProviderAccounts.AnyAsync(x => x.Name == "Bright Data - JP - datacenter_new_proxy_manager (dev seed)")).ShouldBeTrue();
         (await db.ProviderAccounts.AnyAsync(x => x.Name == "WebShare JP - (dev seed)")).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SeedAsync_Should_SkipBrightData_When_CustomerIdOrGatewayPortAreMissing()
+    {
+        await using var db = CreateDb();
+        var partialConfig = new Dictionary<string, string?>
+        {
+            ["Seed:ProxyProviders:BrightData:ApiToken"] = "token-123",
+            ["Seed:ProxyProviders:BrightData:Zone"] = "datacenter_zone",
+        };
+        var sut = CreateSut(db, partialConfig, isDevelopment: true);
+
+        await sut.SeedAsync(CancellationToken.None);
+
+        (await db.ProviderAccounts.AnyAsync(x => x.Name == "Bright Data - JP - datacenter_new_proxy_manager (dev seed)")).ShouldBeFalse();
     }
 
     [Fact]

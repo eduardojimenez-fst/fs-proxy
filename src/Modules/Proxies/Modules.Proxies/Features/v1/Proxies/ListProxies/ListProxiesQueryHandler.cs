@@ -18,11 +18,11 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
 
         if (query.Status is { } status) q = q.Where(p => p.Status == status);
         if (query.ProviderAccountId is { } accountId) q = q.Where(p => p.ProviderAccountId == accountId);
-        if (!string.IsNullOrWhiteSpace(query.Country))
+        if (!string.IsNullOrWhiteSpace(query.Geolocation))
         {
-            var normalizedCountry = query.Country.ToUpperInvariant();
+            var normalizedGeolocation = query.Geolocation.ToUpperInvariant();
 #pragma warning disable CA1862, CA1304, CA1311 // EF Core cannot translate string.Equals(..., StringComparison) to SQL; using ToUpper() is the translatable approach — see https://learn.microsoft.com/ef/core/miscellaneous/collations-and-case-sensitivity
-            q = q.Where(p => p.Country != null && p.Country.ToUpper() == normalizedCountry);
+            q = q.Where(p => p.Geolocation != null && p.Geolocation.ToUpper() == normalizedGeolocation);
 #pragma warning restore CA1862, CA1304, CA1311
         }
         if (query.Tags is { Count: > 0 })
@@ -50,7 +50,7 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
             p.Id, p.Host, p.Port, p.Protocol, p.Status,
             p.ProviderAccountId, accountNames[p.ProviderAccountId].Name, accountNames[p.ProviderAccountId].ProviderType,
             tagsByProxy.Where(t => t.ProxyId == p.Id).Select(t => t.Name).ToList(),
-            p.CreatedAtUtc, p.LastRenewedAtUtc, p.Country, p.ProviderGrouping)).ToList();
+            p.CreatedAtUtc, p.LastRenewedAtUtc, p.Geolocation, p.ProviderGrouping)).ToList();
 
         return new PagedResponse<ProxyDto>
         {

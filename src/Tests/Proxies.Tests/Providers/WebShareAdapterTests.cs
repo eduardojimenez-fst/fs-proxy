@@ -128,7 +128,7 @@ public sealed class WebShareAdapterTests
     }
 
     [Fact]
-    public async Task SyncProxiesAsync_Should_FollowPagination_And_MapCountryAndProviderGrouping()
+    public async Task SyncProxiesAsync_Should_FollowPagination_And_MapGeolocationAndProviderGrouping()
     {
         var page1 = new WebShareProxyListResponse(2, "https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=2&page_size=100",
             [new WebShareProxyRecord("ext-1", "user", "pass", "1.2.3.4", 8080, true, "CL")]);
@@ -149,9 +149,9 @@ public sealed class WebShareAdapterTests
         result.Proxies.Count.ShouldBe(2);
         handler.Requests.Count.ShouldBe(2);
         var first = result.Proxies.Single(p => p.ExternalId == "ext-1");
-        first.Country.ShouldBe("CL");
+        first.Geolocation.ShouldBe("CL");
         first.ProviderGrouping.ShouldBe("Proxy List");
-        result.Proxies.Single(p => p.ExternalId == "ext-2").Country.ShouldBe("AR");
+        result.Proxies.Single(p => p.ExternalId == "ext-2").Geolocation.ShouldBe("AR");
     }
 
     [Fact]
@@ -189,6 +189,6 @@ public sealed class WebShareAdapterTests
         var proxy = result.Proxies.Single();
         proxy.Host.ShouldBe("64.137.37.190");
         proxy.Port.ShouldBe(6780);
-        proxy.Country.ShouldBe("CL");
+        proxy.Geolocation.ShouldBe("CL");
     }
 }
