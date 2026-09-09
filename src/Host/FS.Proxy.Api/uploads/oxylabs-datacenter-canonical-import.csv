@@ -1,0 +1,11 @@
+Host,Port,Protocol,Username,Password,Geolocation,ProxyKind
+dc.oxylabs.io,8001,,,,US,DataCenter
+dc.oxylabs.io,8002,,,,US,DataCenter
+dc.oxylabs.io,8003,,,,MX,DataCenter
+dc.oxylabs.io,8004,,,,MX,DataCenter
+dc.oxylabs.io,8005,,,,AR,DataCenter
+dc.oxylabs.io,8006,,,,AR,DataCenter
+dc.oxylabs.io,8007,,,,CL,DataCenter
+dc.oxylabs.io,8008,,,,CL,DataCenter
+dc.oxylabs.io,8009,,,,CL,DataCenter
+dc.oxylabs.io,8010,,,,CL,DataCenter
