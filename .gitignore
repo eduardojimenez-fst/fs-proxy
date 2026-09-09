@@ -524,3 +524,8 @@ clients/**/.env.local
 # Local-only developer reference docs (may contain real dev credentials, API keys, tokens).
 # This repo is public — never commit anything under here.
 /docs/local/
+
+# `dotnet ef` writes a Windows-style relative path even on macOS/Linux, producing a directory
+# literally named "bin\Debug" that the [Bb]in/ rule above does not match. Generating a migration
+# otherwise leaves a few MB of BuildHost binaries staged.
+**/bin\\Debug/

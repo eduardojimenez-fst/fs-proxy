@@ -56,7 +56,7 @@ A child entity reached **only** through a parent's navigation collection needs `
 
 ## Migrations
 
-Migrations live in **one project per provider** — `src/Host/FS.Proxy.Migrations.PostgreSQL` and `src/Host/FS.Proxy.Migrations.MSSQL` — each organized **per-module by folder** (`Identity/`, `Catalog/`, `Chat/`, …) with its own `{Module}DbContextModelSnapshot`. **An entity change needs a migration in BOTH.**
+Migrations live in **one project per provider** — `src/Host/FS.Proxy.Migrations.PostgreSQL` and `src/Host/FS.Proxy.Migrations.MSSQL` — each organized **per-module by folder** (`Identity/`, `Catalog/`, `Chat/`, …) with its own `{Module}DbContextModelSnapshot`. Framework-owned contexts follow the same shape — `Eventing/` and `DataProtection/`. **An entity change needs a migration in BOTH.**
 
 `src/Host/FS.Proxy.Migrations.Common` holds DbContexts that belong to no module and no single provider — today just `DataProtectionKeysDbContext`, the Data Protection key store both the API and the DbMigrator share. Both provider projects reference it and each carries its own `DataProtection/` folder for it.
 

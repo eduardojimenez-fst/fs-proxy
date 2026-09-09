@@ -167,7 +167,7 @@
          packages. Deliberately NOT the repo Version (10.0.0): the template replaces by literal
          text, and that string also appears in Version and ContainerImageTags. Keep this comment
          free of the placeholder text itself, or it gets rewritten too. -->
-    <FshFrameworkVersion Condition="'$(FshFrameworkVersion)' == ''">10.0.0-local.20260909T192142</FshFrameworkVersion>
+    <FshFrameworkVersion Condition="'$(FshFrameworkVersion)' == ''">10.0.0-local.20260909T232109</FshFrameworkVersion>
   </PropertyGroup>
   <ItemGroup Label="FSH Framework (opt-in; inert unless UseFrameworkPackages=true)">
     <!-- Central package management requires a PackageVersion for every PackageReference.
