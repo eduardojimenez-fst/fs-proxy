@@ -51,6 +51,14 @@ Redis connection string — since anything its seed encrypts otherwise becomes u
 API (`CryptographicException: key {guid} not found in the key ring`). Redis eviction has the same
 effect on a live system: losing a key takes every session and pending reset token with it.
 
+The DbMigrator additionally creates the key table **before** it starts its host
+(`DataProtectionSchema.EnsureAsync`). Data Protection resolves its key ring eagerly during
+`StartAsync`, long before the migrator's own Step 0/1/2 flow, so the `IDbInitializer` alone is too
+late there: the first run against an empty database logs a query failure with a stack trace and —
+worse — does not fail, because a key created while the table is missing cannot be persisted, and
+anything encrypted in that window is undecryptable afterwards. The initializer still covers the API
+and the test harness, which migrate before they serve.
+
 `DataProtectionKeysDbContext` is a plain `DbContext`, not `BaseDbContext` — keys are global
 framework infrastructure, not tenant data. It registers a `DataProtectionKeysDbInitializer` like
 every other framework context, which is what makes the table appear in the API, the DbMigrator and
