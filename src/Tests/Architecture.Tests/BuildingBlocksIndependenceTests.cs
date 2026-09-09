@@ -69,7 +69,7 @@ public class BuildingBlocksIndependenceTests
         }
     }
 
-    [Fact]
+    [KernelSourceOnlyFact]
     public void BuildingBlocks_Projects_Should_Not_Reference_Modules_Directly()
     {
         string buildingBlocksRoot = Path.Combine(SolutionRoot, "src", "BuildingBlocks");
@@ -117,7 +117,7 @@ public class BuildingBlocksIndependenceTests
             $"Violations: {string.Join(", ", violations)}");
     }
 
-    [Fact]
+    [KernelSourceOnlyFact]
     public void Core_BuildingBlock_Should_Be_Dependency_Free()
     {
         // Core should only depend on .NET BCL and Mediator abstractions

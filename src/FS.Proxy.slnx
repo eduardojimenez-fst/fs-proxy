@@ -53,6 +53,7 @@
   </Folder>
   <Folder Name="/Host/Migrations/">
     <Project Path="Host/FS.Proxy.Migrations.PostgreSQL/FS.Proxy.Migrations.PostgreSQL.csproj" Id="2c21903e-5dfa-47e0-82d9-1a0bd627fcbd" />
+    <Project Path="Host/FS.Proxy.Migrations.MSSQL/FS.Proxy.Migrations.MSSQL.csproj" />
   </Folder>
   <Folder Name="/Tests/">
     <Project Path="Tests/Architecture.Tests/Architecture.Tests.csproj" />

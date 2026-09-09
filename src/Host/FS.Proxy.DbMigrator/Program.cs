@@ -18,6 +18,7 @@ using FSH.Modules.Multitenancy.Data;
 using FSH.Modules.Multitenancy.Features.v1.GetTenantStatus;
 using FSH.Modules.Tickets;
 using FSH.Modules.Webhooks;
+using FSH.Framework.Shared.Persistence;
 using FS.Proxy.DbMigrator;
 using FS.Proxy.DbMigrator.DemoSeed;
 using FS.Proxy.Migrations.PostgreSQL.DataProtection;
@@ -92,7 +93,9 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["DatabaseOptions:ConnectionS
 // DataProtectionKeys does not exist" before a single log line of this migrator's own output
 // appeared. A throwaway logger + this file's own Postgres-ready wait (Postgres may still be cold-
 // starting) keep this self-contained and independent of the full host.
-await BootstrapDataProtectionKeysTableAsync(builder.Configuration["DatabaseOptions:ConnectionString"]!).ConfigureAwait(false);
+await BootstrapDataProtectionKeysTableAsync(
+    builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.PostgreSQL,
+    builder.Configuration["DatabaseOptions:ConnectionString"]!).ConfigureAwait(false);
 
 // Mirror the API's mediator registration so module handlers wire correctly —
 // some module DbInitializers depend on services that mediator pipelines build.
@@ -209,25 +212,29 @@ await host.StartAsync().ConfigureAwait(false);
 try
 {
     // ── Step 0 — wait for the database to come up ────────────────────────
-    // Postgres may still be initialising on cold-start; exp. backoff (≤2 min), then TimeoutException + exit 1.
-    var connectionString = host.Services.GetRequiredService<IConfiguration>()["DatabaseOptions:ConnectionString"]
+    // The server may still be initialising on cold-start; exp. backoff (≤2 min), then TimeoutException + exit 1.
+    var migratorConfiguration = host.Services.GetRequiredService<IConfiguration>();
+    var connectionString = migratorConfiguration["DatabaseOptions:ConnectionString"]
         ?? throw new InvalidOperationException("DatabaseOptions:ConnectionString is not configured.");
-    await Console.Out.WriteLineAsync("[migrator] waiting for postgres…").ConfigureAwait(false);
-    await PostgresMigratorLock.WaitForDatabaseAsync(connectionString, logger, CancellationToken.None)
+    var dbProvider = migratorConfiguration["DatabaseOptions:Provider"] ?? DbProviders.PostgreSQL;
+    var providerLock = MigratorLockFactory.Create(dbProvider);
+
+    await Console.Out.WriteLineAsync($"[migrator] waiting for {providerLock.ProviderDisplayName}…").ConfigureAwait(false);
+    await providerLock.WaitForDatabaseAsync(connectionString, logger, CancellationToken.None)
         .ConfigureAwait(false);
-    await Console.Out.WriteLineAsync("[migrator] postgres ready").ConfigureAwait(false);
+    await Console.Out.WriteLineAsync($"[migrator] {providerLock.ProviderDisplayName} ready").ConfigureAwait(false);
 
-    // Log the connected role + database so a misconfigured low-priv connection string surfaces now,
+    // Log the connected login + database so a misconfigured low-priv connection string surfaces now,
     // not as "permission denied for schema public" during MigrateAsync.
-    await LogConnectionIdentityAsync(connectionString).ConfigureAwait(false);
+    await LogConnectionIdentityAsync(providerLock, connectionString).ConfigureAwait(false);
 
-    // ── Step 0b — acquire the advisory lock ──────────────────────────────
-    // Session-level lock: concurrent runs block here; auto-releases on connection close (no orphan on crash).
-    await Console.Out.WriteLineAsync("[migrator] acquiring advisory lock…").ConfigureAwait(false);
-    await using var migratorLock = await PostgresMigratorLock
+    // ── Step 0b — acquire the migrator lock ──────────────────────────────
+    // Session-scoped lock: concurrent runs block here; auto-releases on connection close (no orphan on crash).
+    await Console.Out.WriteLineAsync("[migrator] acquiring migrator lock…").ConfigureAwait(false);
+    await using var migratorLock = await providerLock
         .AcquireAsync(connectionString, logger, CancellationToken.None)
         .ConfigureAwait(false);
-    await Console.Out.WriteLineAsync("[migrator] advisory lock acquired").ConfigureAwait(false);
+    await Console.Out.WriteLineAsync("[migrator] migrator lock acquired").ConfigureAwait(false);
 
     // ── Step 1 — tenant catalog ───────────────────────────────────────────
     // Always applied first: the per-tenant migrator below reads every tenant out of this database.
@@ -372,13 +379,19 @@ finally
     await host.StopAsync().ConfigureAwait(false);
 }
 
-static async Task BootstrapDataProtectionKeysTableAsync(string connectionString)
+static async Task BootstrapDataProtectionKeysTableAsync(string dbProvider, string connectionString)
 {
     using var bootstrapLoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddConsole());
     var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("DataProtectionBootstrap");
-    await Console.Out.WriteLineAsync("[migrator] waiting for postgres (Data Protection bootstrap)…").ConfigureAwait(false);
-    await PostgresMigratorLock.WaitForDatabaseAsync(connectionString, bootstrapLogger, CancellationToken.None)
+    // Readiness now goes through the provider abstraction: WaitForDatabaseAsync moved from a
+    // static on PostgresMigratorLock to an IMigratorLock instance member when MSSQL support
+    // landed, so the wait works for whichever provider is configured.
+    var bootstrapLock = MigratorLockFactory.Create(dbProvider);
+    await Console.Out.WriteLineAsync($"[migrator] waiting for {bootstrapLock.ProviderDisplayName} (Data Protection bootstrap)…").ConfigureAwait(false);
+    await bootstrapLock.WaitForDatabaseAsync(connectionString, bootstrapLogger, CancellationToken.None)
         .ConfigureAwait(false);
+    // NOTE: the context itself is still Postgres-only, matching the AddDbContext registration
+    // above. Both move together when the MSSQL migrations for this service are done.
     var dataProtectionOptions = new DbContextOptionsBuilder<DataProtectionKeysDbContext>()
         .UseNpgsql(connectionString)
         .Options;
@@ -387,20 +400,17 @@ static async Task BootstrapDataProtectionKeysTableAsync(string connectionString)
     await Console.Out.WriteLineAsync("[migrator] Data Protection keys table ready").ConfigureAwait(false);
 }
 
-static async Task LogConnectionIdentityAsync(string connectionString)
+static async Task LogConnectionIdentityAsync(IMigratorLock providerLock, string connectionString)
 {
     // Best-effort identity probe — never fail the migrator over a logging step.
     try
     {
-        await using var conn = new Npgsql.NpgsqlConnection(connectionString);
-        await conn.OpenAsync().ConfigureAwait(false);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT current_user, current_database()";
-        await using var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false);
-        if (await reader.ReadAsync().ConfigureAwait(false))
+        var (role, db) = await providerLock
+            .GetConnectionIdentityAsync(connectionString, CancellationToken.None)
+            .ConfigureAwait(false);
+
+        if (!string.IsNullOrEmpty(role))
         {
-            var role = reader.GetString(0);
-            var db = reader.GetString(1);
             await Console.Out.WriteLineAsync(string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
                 $"[migrator] connected as role={role} database={db}")).ConfigureAwait(false);

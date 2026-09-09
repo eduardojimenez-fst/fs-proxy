@@ -57,11 +57,18 @@ stay in lock-step). Override anything via environment variables:
 
 | Variable                                  | Notes                                       |
 | ----------------------------------------- | ------------------------------------------- |
-| `DatabaseOptions__Provider`               | `POSTGRESQL` (only provider currently)      |
+| `DatabaseOptions__Provider`               | `POSTGRESQL` or `MSSQL`                     |
 | `DatabaseOptions__ConnectionString`       | Use elevated DDL credentials here           |
-| `DatabaseOptions__MigrationsAssembly`     | `FS.Proxy.Migrations.PostgreSQL`         |
+| `DatabaseOptions__MigrationsAssembly`     | Must match the provider — `FS.Proxy.Migrations.PostgreSQL` or `FS.Proxy.Migrations.MSSQL` |
 | `CachingOptions__Redis`                   | Optional — only used by module DI graphs    |
 | `Logging__LogLevel__Default`              | `Information` is the default                |
+
+> **SQL Server requires 2025 (17.x) or Azure SQL.** JSON columns map to the native `json` type, which
+> does not exist on 2019/2022 — those migrations will not apply there.
+>
+> The migrator serializes concurrent runs with a lock the database server owns and releases on
+> disconnect: a Postgres advisory lock, or `sp_getapplock` on SQL Server. Either way a crashed
+> migrator never strands it.
 
 ## Deployment patterns
 
@@ -98,9 +105,9 @@ spec:
             - name: DatabaseOptions__ConnectionString
               valueFrom: { secretKeyRef: { name: db-ddl, key: connection } }
             - name: DatabaseOptions__Provider
-              value: POSTGRESQL
+              value: POSTGRESQL          # or MSSQL
             - name: DatabaseOptions__MigrationsAssembly
-              value: FS.Proxy.Migrations.PostgreSQL
+              value: FS.Proxy.Migrations.PostgreSQL   # or FS.Proxy.Migrations.MSSQL
 ```
 
 ### GitHub Actions / Azure Pipelines
@@ -113,8 +120,8 @@ Run as a step before the deploy step:
     dotnet run --project src/Host/FS.Proxy.DbMigrator -- apply
   env:
     DatabaseOptions__ConnectionString: ${{ secrets.DB_DDL_CONNECTION }}
-    DatabaseOptions__Provider: POSTGRESQL
-    DatabaseOptions__MigrationsAssembly: FS.Proxy.Migrations.PostgreSQL
+    DatabaseOptions__Provider: POSTGRESQL                              # or MSSQL
+    DatabaseOptions__MigrationsAssembly: FS.Proxy.Migrations.PostgreSQL   # or FS.Proxy.Migrations.MSSQL
 ```
 
 ### Local development

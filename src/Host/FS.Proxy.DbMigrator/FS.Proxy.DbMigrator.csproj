@@ -51,6 +51,7 @@
     <ProjectReference Include="..\..\Modules\Tickets\Modules.Tickets.Contracts\Modules.Tickets.Contracts.csproj" />
     <ProjectReference Include="..\..\Modules\Webhooks\Modules.Webhooks\Modules.Webhooks.csproj" />
     <ProjectReference Include="..\FS.Proxy.Migrations.PostgreSQL\FS.Proxy.Migrations.PostgreSQL.csproj" />
+    <ProjectReference Include="..\FS.Proxy.Migrations.MSSQL\FS.Proxy.Migrations.MSSQL.csproj" />
   </ItemGroup>
 
   <!-- Share configuration with the API so connection strings + tenant options
