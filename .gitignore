@@ -520,3 +520,8 @@ clients/**/.env.local
 # Audit dead-letter queue — runtime fallback when the audit pipeline cannot
 # reach its persistent sink. Local-only by design; never commit.
 **/audit-dlq/
+
+# `dotnet ef` writes a Windows-style relative path even on macOS/Linux, producing a directory
+# literally named "bin\Debug" that the [Bb]in/ rule above does not match. Generating a migration
+# otherwise leaves a few MB of BuildHost binaries staged.
+**/bin\\Debug/

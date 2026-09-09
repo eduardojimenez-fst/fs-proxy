@@ -110,6 +110,13 @@ public sealed class FshWebApplicationFactory : WebApplicationFactory<Program>, I
                 ["DatabaseOptions:ConnectionString"] = _database.GetConnectionString(),
                 ["DatabaseOptions:MigrationsAssembly"] = _database.MigrationsAssembly,
                 ["CachingOptions:Redis"] = "",
+                // The suite runs without Redis, so the framework's default key ring would be
+                // ephemeral and in-process — neither store exercised. Pointing Data Protection at
+                // the database instead means every test that registers a user, resets a password
+                // or enrols in two-factor also proves the key table is actually migrated and
+                // writable. That is precisely the failure a missing IDbInitializer produces:
+                // "CryptographicException ... Invalid object name 'DataProtectionKeys'".
+                ["DataProtection:Store"] = "Database",
                 ["JwtOptions:Issuer"] = TestConstants.JwtIssuer,
                 ["JwtOptions:Audience"] = TestConstants.JwtAudience,
                 ["JwtOptions:SigningKey"] = TestConstants.JwtSigningKey,
