@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>FS.Proxy.Migrations.Common</RootNamespace>
+		<AssemblyName>FS.Proxy.Migrations.Common</AssemblyName>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+	<ItemGroup>
+	  <!-- DataProtectionKeysDbContext is provider-neutral on purpose: it is the one DbContext both
+	       FS.Proxy.Api and the separately-run FS.Proxy.DbMigrator always share, and both provider
+	       migrations projects (PostgreSQL + MSSQL) carry their own DataProtection\ folder for it.
+	       Keeping the type here rather than inside one provider's project is what lets either
+	       provider project be the only one in the tree. -->
+	  <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" />
+	</ItemGroup>
+
+</Project>

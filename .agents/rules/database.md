@@ -29,7 +29,8 @@ A child entity reached **only** through a parent's navigation collection needs `
 
 ## Database providers (PostgreSQL + SQL Server)
 
-- The provider is **config-selected**, never hardcoded: `DatabaseOptions:Provider` (`POSTGRESQL` | `MSSQL`) plus a matching `DatabaseOptions:MigrationsAssembly`. Both migrations projects ship in every build, so switching is a config change — no rescaffold, no file surgery.
+- The provider is **config-selected**, never hardcoded: `DatabaseOptions:Provider` (`MSSQL` | `POSTGRESQL`) plus a matching `DatabaseOptions:MigrationsAssembly`. Both migrations projects ship in every build, so switching is a config change — no rescaffold, no file surgery.
+- **This app runs on `MSSQL`** — that is the default in `appsettings.json`, in the AppHost (`DbProvider=POSTGRESQL` switches the whole stack back), and in the integration-test harness. PostgreSQL stays fully maintained: both providers are listed in `FshMaintainedDbProviders`, so a model change still needs a migration in both.
 - **MSSQL requires SQL Server 2025 (17.x) or Azure SQL.** JSON columns map to the native `json` type (compatibility level 170); it does not exist on 2019/2022 and those migrations will not apply there.
 - **Never write provider SQL in an entity configuration.** A literal `HasColumnType("jsonb")` or `HasFilter("\"IsDeleted\" = FALSE")` locks the model to one provider and fails model-build on the other. Declare intent instead — `HeroProviderConventions` resolves it per provider:
 
@@ -57,14 +58,16 @@ A child entity reached **only** through a parent's navigation collection needs `
 
 Migrations live in **one project per provider** — `src/Host/FS.Proxy.Migrations.PostgreSQL` and `src/Host/FS.Proxy.Migrations.MSSQL` — each organized **per-module by folder** (`Identity/`, `Catalog/`, `Chat/`, …) with its own `{Module}DbContextModelSnapshot`. **An entity change needs a migration in BOTH.**
 
+`src/Host/FS.Proxy.Migrations.Common` holds DbContexts that belong to no module and no single provider — today just `DataProtectionKeysDbContext`, the Data Protection key store both the API and the DbMigrator share. Both provider projects reference it and each carries its own `DataProtection/` folder for it.
+
 ```bash
-# PostgreSQL (default provider)
+# PostgreSQL
 dotnet ef migrations add {Name} \
   --project src/Host/FS.Proxy.Migrations.PostgreSQL \
   --startup-project src/Host/FS.Proxy.Api \
   --context {Module}DbContext
 
-# SQL Server — the env vars pick the provider the design-time model is built against
+# SQL Server (this app's provider) — the env vars pick the provider the design-time model is built against
 DatabaseOptions__Provider=MSSQL \
 DatabaseOptions__MigrationsAssembly=FS.Proxy.Migrations.MSSQL \
 DatabaseOptions__ConnectionString='Server=localhost,1433;Database=fsh;User Id=sa;Password=…;TrustServerCertificate=True' \
@@ -83,5 +86,5 @@ dotnet ef migrations add {Name} \
 
 ## Tests + EF
 
-- Integration tests use Testcontainers (real PostgreSQL by default) — **Docker must be running**. Set `FSH_TEST_DB_PROVIDER=MSSQL` to run the same suite against SQL Server 2025.
+- Integration tests use Testcontainers (real SQL Server 2025 by default) — **Docker must be running**. Set `FSH_TEST_DB_PROVIDER=POSTGRESQL` to run the same suite against PostgreSQL.
 - In integration tests, set the Finbuckle tenant context **inline in the same method** as the `UserManager`/`DbContext` call; an awaited-helper set is lost (AsyncLocal) and the tenant query filter NREs.

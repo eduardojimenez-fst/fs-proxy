@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using FSH.Framework.Eventing;
+using FSH.Framework.Persistence;
 using FSH.Framework.Shared.Multitenancy;
 using FSH.Framework.Web;
 using FSH.Framework.Web.Modules;
@@ -21,7 +22,7 @@ using FSH.Modules.Webhooks;
 using FSH.Framework.Shared.Persistence;
 using FS.Proxy.DbMigrator;
 using FS.Proxy.DbMigrator.DemoSeed;
-using FS.Proxy.Migrations.PostgreSQL.DataProtection;
+using FS.Proxy.Migrations.Common.DataProtection;
 using Finbuckle.MultiTenant.Abstractions;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -89,13 +90,14 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["DatabaseOptions:ConnectionS
 // The Data Protection keys table must exist BEFORE the full host is built: something inside the
 // large DI graph AddModules/AddHeroPlatform assembles below eagerly reads the key ring during
 // host.StartAsync() — earlier than this file's own Step 0/1/2 migration flow ever gets a chance to
-// run — so migrating it as part of that later flow was too late and crashed with "relation
-// DataProtectionKeys does not exist" before a single log line of this migrator's own output
-// appeared. A throwaway logger + this file's own Postgres-ready wait (Postgres may still be cold-
-// starting) keep this self-contained and independent of the full host.
+// run — so migrating it as part of that later flow was too late and crashed on the missing
+// DataProtectionKeys table before a single log line of this migrator's own output appeared. A
+// throwaway logger + this file's own database-ready wait (the server may still be cold-starting)
+// keep this self-contained and independent of the full host.
 await BootstrapDataProtectionKeysTableAsync(
-    builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.PostgreSQL,
-    builder.Configuration["DatabaseOptions:ConnectionString"]!).ConfigureAwait(false);
+    builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL,
+    builder.Configuration["DatabaseOptions:ConnectionString"]!,
+    builder.Configuration["DatabaseOptions:MigrationsAssembly"]!).ConfigureAwait(false);
 
 // Mirror the API's mediator registration so module handlers wire correctly —
 // some module DbInitializers depend on services that mediator pipelines build.
@@ -167,13 +169,22 @@ builder.AddHeroPlatform(o =>
 // when Redis IS configured for it) and this migrator (falling back to local file storage) can end
 // up with two entirely different key stores: credentials this migrator's dev-seed encrypts become
 // permanently undecryptable by the API ("CryptographicException: key {guid} not found in the key
-// ring"). Persisting keys to Postgres — the one store both hosts always share regardless of how
-// either is launched — fixes the storage-location mismatch; SetApplicationName still matches
-// FS.Proxy.Api/Program.cs's identical call exactly, and is required in addition to (not instead
-// of) the shared store, since Data Protection isolates keys by application name even within one
-// physical store.
+// ring"). Persisting keys to the application database — the one store both hosts always share
+// regardless of how either is launched — fixes the storage-location mismatch; SetApplicationName
+// still matches FS.Proxy.Api/Program.cs's identical call exactly, and is required in addition to
+// (not instead of) the shared store, since Data Protection isolates keys by application name even
+// within one physical store.
+//
+// ConfigureHeroDatabase rather than a bare UseNpgsql/UseSqlServer: it is the one call that picks the
+// provider, points at that provider's migrations assembly AND (on MSSQL) sets
+// UseCompatibilityLevel(170) together, so this context follows DatabaseOptions:Provider exactly like
+// every module context does.
 builder.Services.AddDbContext<DataProtectionKeysDbContext>(o =>
-    o.UseNpgsql(builder.Configuration["DatabaseOptions:ConnectionString"]));
+    o.ConfigureHeroDatabase(
+        builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL,
+        builder.Configuration["DatabaseOptions:ConnectionString"]!,
+        builder.Configuration["DatabaseOptions:MigrationsAssembly"]!,
+        builder.Environment.IsDevelopment()));
 builder.Services.AddDataProtection()
     .SetApplicationName("FSH.Starter")
     .PersistKeysToDbContext<DataProtectionKeysDbContext>();
@@ -216,7 +227,7 @@ try
     var migratorConfiguration = host.Services.GetRequiredService<IConfiguration>();
     var connectionString = migratorConfiguration["DatabaseOptions:ConnectionString"]
         ?? throw new InvalidOperationException("DatabaseOptions:ConnectionString is not configured.");
-    var dbProvider = migratorConfiguration["DatabaseOptions:Provider"] ?? DbProviders.PostgreSQL;
+    var dbProvider = migratorConfiguration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL;
     var providerLock = MigratorLockFactory.Create(dbProvider);
 
     await Console.Out.WriteLineAsync($"[migrator] waiting for {providerLock.ProviderDisplayName}…").ConfigureAwait(false);
@@ -379,7 +390,10 @@ finally
     await host.StopAsync().ConfigureAwait(false);
 }
 
-static async Task BootstrapDataProtectionKeysTableAsync(string dbProvider, string connectionString)
+static async Task BootstrapDataProtectionKeysTableAsync(
+    string dbProvider,
+    string connectionString,
+    string migrationsAssembly)
 {
     using var bootstrapLoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddConsole());
     var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("DataProtectionBootstrap");
@@ -390,13 +404,25 @@ static async Task BootstrapDataProtectionKeysTableAsync(string dbProvider, strin
     await Console.Out.WriteLineAsync($"[migrator] waiting for {bootstrapLock.ProviderDisplayName} (Data Protection bootstrap)…").ConfigureAwait(false);
     await bootstrapLock.WaitForDatabaseAsync(connectionString, bootstrapLogger, CancellationToken.None)
         .ConfigureAwait(false);
-    // NOTE: the context itself is still Postgres-only, matching the AddDbContext registration
-    // above. Both move together when the MSSQL migrations for this service are done.
-    var dataProtectionOptions = new DbContextOptionsBuilder<DataProtectionKeysDbContext>()
-        .UseNpgsql(connectionString)
-        .Options;
+    // Same provider selection as the AddDbContext registration above, so this pre-host bootstrap
+    // migrates the table on whichever engine DatabaseOptions:Provider names. isDevelopment: false —
+    // this throwaway context only runs MigrateAsync, and never wants sensitive-data logging.
+    // Two statements, not a fluent chain: ConfigureHeroDatabase returns the non-generic
+    // DbContextOptionsBuilder, so chaining .Options off it would hand back DbContextOptions rather
+    // than the DbContextOptions<DataProtectionKeysDbContext> the constructor takes.
+    var dataProtectionOptionsBuilder = new DbContextOptionsBuilder<DataProtectionKeysDbContext>();
+    dataProtectionOptionsBuilder.ConfigureHeroDatabase(
+        dbProvider, connectionString, migrationsAssembly, isDevelopment: false);
+    var dataProtectionOptions = dataProtectionOptionsBuilder.Options;
     await using var dataProtectionDb = new DataProtectionKeysDbContext(dataProtectionOptions);
     await dataProtectionDb.Database.MigrateAsync(CancellationToken.None).ConfigureAwait(false);
+
+    // MigrateAsync just created the database if this is a cold start, and the failed logins from
+    // before it existed are still cached in the connection pool. Drop them, or the Step 0/1 probes
+    // below inherit that stale "database does not exist" answer and the tenant-catalog migrate
+    // issues a second CREATE DATABASE. See IMigratorLock.ResetPooledConnections.
+    bootstrapLock.ResetPooledConnections();
+
     await Console.Out.WriteLineAsync("[migrator] Data Protection keys table ready").ConfigureAwait(false);
 }
 

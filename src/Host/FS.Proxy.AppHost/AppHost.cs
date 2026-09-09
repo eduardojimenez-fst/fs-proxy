@@ -10,8 +10,9 @@ var appPrefix = builder.Environment.ApplicationName
     .ToLowerInvariant();
 #pragma warning restore CA1308
 
-// Database provider is config-selected, so the whole stack switches with no code edit:
-//   DbProvider=MSSQL dotnet run --project src/Host/FS.Proxy.AppHost
+// Database provider is config-selected, so the whole stack switches with no code edit. MSSQL is
+// this app's engine; Postgres stays supported and is one env var away:
+//   DbProvider=POSTGRESQL dotnet run --project src/Host/FS.Proxy.AppHost
 // MSSQL requires SQL Server 2025 (17.x) or Azure SQL — the native json type the model maps to does
 // not exist on 2019/2022. See .agents/rules/database.md.
 // Provider names mirror FSH.Framework.Shared.Persistence.DbProviders. Duplicated as literals
@@ -19,7 +20,16 @@ var appPrefix = builder.Environment.ApplicationName
 const string PostgresProvider = "POSTGRESQL";
 const string MssqlProvider = "MSSQL";
 
-var dbProvider = (builder.Configuration["DbProvider"] ?? PostgresProvider).ToUpperInvariant();
+var dbProvider = (builder.Configuration["DbProvider"] ?? MssqlProvider).ToUpperInvariant();
+
+// Reject an unrecognised value rather than quietly falling through to the other engine: now that
+// MSSQL is the default, a typo like DbProvider=MSQL would otherwise start the whole Postgres stack.
+if (dbProvider != MssqlProvider && dbProvider != PostgresProvider)
+{
+    throw new InvalidOperationException(
+        $"DbProvider '{dbProvider}' is not supported. Use '{MssqlProvider}' or '{PostgresProvider}'.");
+}
+
 var useMssql = dbProvider == MssqlProvider;
 
 IResourceBuilder<IResourceWithConnectionString> database;

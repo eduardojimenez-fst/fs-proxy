@@ -52,6 +52,7 @@
     <Project Path="Host/FS.Proxy.AppHost/FS.Proxy.AppHost.csproj" Id="86bd02ee-f1b5-472c-b5bd-bc607fe084de" />
   </Folder>
   <Folder Name="/Host/Migrations/">
+    <Project Path="Host/FS.Proxy.Migrations.Common/FS.Proxy.Migrations.Common.csproj" />
     <Project Path="Host/FS.Proxy.Migrations.PostgreSQL/FS.Proxy.Migrations.PostgreSQL.csproj" Id="2c21903e-5dfa-47e0-82d9-1a0bd627fcbd" />
     <Project Path="Host/FS.Proxy.Migrations.MSSQL/FS.Proxy.Migrations.MSSQL.csproj" />
   </Folder>

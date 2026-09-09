@@ -13,7 +13,7 @@ relevant rule file before working in that area** (see the index below). Keep thi
 A **modular monolith** (Vertical Slice Architecture) backend that ships with two **React + Vite**
 front-ends and a CLI. Multitenancy, auth, auditing, billing, files, chat and more are first-class.
 
-- **Backend** — .NET 10, EF Core 10, PostgreSQL, Redis, JWT + ASP.NET Identity, Finbuckle multitenancy,
+- **Backend** — .NET 10, EF Core 10, SQL Server 2025, Redis, JWT + ASP.NET Identity, Finbuckle multitenancy,
   Hangfire, OpenAPI/Scalar, Serilog + OpenTelemetry, .NET Aspire.
 - **Frontends** — `clients/admin` (operator-facing) and `clients/dashboard` (tenant-facing): React 19,
   Vite 7, TypeScript, TanStack Query v5, React Router 7, Radix + Tailwind v4 (shadcn-style), SignalR/SSE.
@@ -25,10 +25,11 @@ front-ends and a CLI. Multitenancy, auth, auditing, billing, files, chat and mor
 | `src/BuildingBlocks/` | Shared framework libraries (Core, Persistence, Web, Caching, Eventing, Storage, Quota…). **Protected — see below.** |
 | `src/Modules/{Name}/` | Bounded contexts. Each has a runtime project + a `.Contracts` project (its only public API). |
 | `src/Host/FS.Proxy.Api` | Composition-root Web API host. |
-| `src/Host/FS.Proxy.AppHost` | .NET Aspire orchestrator (Postgres, Redis, MinIO, migrator, API, **both React apps**). |
+| `src/Host/FS.Proxy.AppHost` | .NET Aspire orchestrator (SQL Server, Redis, MinIO, migrator, API, **both React apps**). `DbProvider=POSTGRESQL` swaps the database for Postgres + pgAdmin. |
 | `src/Host/FS.Proxy.DbMigrator` | One-shot migrate/seed runner. DB is **not** migrated at API startup. |
-| `src/Host/FS.Proxy.Migrations.PostgreSQL` | PostgreSQL EF migrations, organized per-module by folder. |
-| `src/Host/FS.Proxy.Migrations.MSSQL` | SQL Server EF migrations, same per-module layout. **Requires SQL Server 2025 / Azure SQL.** |
+| `src/Host/FS.Proxy.Migrations.MSSQL` | SQL Server EF migrations, organized per-module by folder. **This app's provider** — requires SQL Server 2025 / Azure SQL. |
+| `src/Host/FS.Proxy.Migrations.PostgreSQL` | PostgreSQL EF migrations, same per-module layout. Still maintained. |
+| `src/Host/FS.Proxy.Migrations.Common` | Provider-neutral DbContexts shared by both migrations projects (`DataProtectionKeysDbContext`). |
 | `src/Tests/` | Per-module tests, `Architecture.Tests` (NetArchTest), `Integration.Tests` (Testcontainers). |
 | `src/Tools/CLI` | The `fsh` CLI (Spectre.Console). |
 | `clients/admin`, `clients/dashboard` | The two React apps. |
@@ -42,7 +43,7 @@ front-ends and a CLI. Multitenancy, auth, auditing, billing, files, chat and mor
 | Framework | .NET 10 / C# latest | Framework | React 19 + Vite 7 + TS 5.x |
 | CQRS | Mediator 3.x (source-gen) | Data | TanStack Query v5 |
 | Validation | FluentValidation 12.x | Routing | React Router 7 |
-| ORM / DB | EF Core 10 / PostgreSQL (Npgsql) or SQL Server 2025 | UI | Radix + Tailwind v4 + CVA (shadcn) |
+| ORM / DB | EF Core 10 / SQL Server 2025 (default) or PostgreSQL | UI | Radix + Tailwind v4 + CVA (shadcn) |
 | Auth | JWT Bearer + ASP.NET Identity | Forms | react-hook-form + zod (**admin only**) |
 | Multitenancy | Finbuckle 10.x | Realtime | `@microsoft/signalr`, SSE (dashboard) |
 | Cache / Jobs | Redis, Hangfire | Tests | Playwright (route-mocked) |
@@ -53,7 +54,7 @@ front-ends and a CLI. Multitenancy, auth, auditing, billing, files, chat and mor
 ## Build & run
 
 ```bash
-# Whole stack (Postgres + pgAdmin + Redis + MinIO + migrator + API + both React apps)
+# Whole stack (SQL Server + Redis + MinIO + migrator + API + both React apps)
 dotnet run --project src/Host/FS.Proxy.AppHost   # one-time: npm install in clients/admin & clients/dashboard
 
 dotnet build src/FS.Proxy.slnx                   # build backend
@@ -78,7 +79,7 @@ dotnet run --project src/Host/FS.Proxy.DbMigrator -- apply [--seed]
 dotnet run --project src/Host/FS.Proxy.DbMigrator -- list-pending
 ```
 
-**Ports:** API 7030 (https)/5030 (http) · admin 5173 · dashboard 5174 · Postgres 5432 · pgAdmin 5050 · Valkey 6379 · MinIO 9000/9001.
+**Ports:** API 7030 (https)/5030 (http) · admin 5173 · dashboard 5174 · SQL Server 1433 · Valkey 6379 · MinIO 9000/9001 (`DbProvider=POSTGRESQL`: Postgres 5432 · pgAdmin 5050).
 
 ## Branching & PRs
 

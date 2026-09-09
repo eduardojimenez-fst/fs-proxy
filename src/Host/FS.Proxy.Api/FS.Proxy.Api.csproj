@@ -32,6 +32,7 @@
     <ProjectReference Include="..\..\Modules\Auditing\Modules.Auditing\Modules.Auditing.csproj" />
     <ProjectReference Include="..\..\Modules\Identity\Modules.Identity\Modules.Identity.csproj" />
     <ProjectReference Include="..\..\Modules\Multitenancy\Modules.Multitenancy\Modules.Multitenancy.csproj" />
+    <ProjectReference Include="..\FS.Proxy.Migrations.Common\FS.Proxy.Migrations.Common.csproj" />
     <ProjectReference Include="..\FS.Proxy.Migrations.PostgreSQL\FS.Proxy.Migrations.PostgreSQL.csproj" />
     <ProjectReference Include="..\FS.Proxy.Migrations.MSSQL\FS.Proxy.Migrations.MSSQL.csproj" />
     <ProjectReference Include="..\..\Modules\Webhooks\Modules.Webhooks\Modules.Webhooks.csproj" />

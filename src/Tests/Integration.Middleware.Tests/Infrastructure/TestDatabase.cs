@@ -9,9 +9,9 @@ namespace Integration.Middleware.Tests.Infrastructure;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Selected by the <c>FSH_TEST_DB_PROVIDER</c> environment variable, defaulting to PostgreSQL so an
-/// unqualified <c>dotnet test</c> behaves exactly as it did before SQL Server support existed. Set
-/// it to <c>MSSQL</c> to run the same suite against SQL Server.
+/// Selected by the <c>FSH_TEST_DB_PROVIDER</c> environment variable, defaulting to SQL Server —
+/// this app's engine, so an unqualified <c>dotnet test</c> exercises what actually ships. Set it to
+/// <c>POSTGRESQL</c> to run the same suite against Postgres.
 /// </para>
 /// <para>
 /// The SQL Server image is pinned to 2025 because the model maps JSON columns to the native
@@ -63,7 +63,7 @@ public sealed class TestDatabase
 
     /// <summary>The provider the suite is configured to run against, without starting a container.</summary>
     public static string SelectedProvider =>
-        (Environment.GetEnvironmentVariable(ProviderEnvironmentVariable) ?? PostgresProvider).ToUpperInvariant();
+        (Environment.GetEnvironmentVariable(ProviderEnvironmentVariable) ?? MssqlProvider).ToUpperInvariant();
 
     /// <summary>True when the suite is configured to run against PostgreSQL.</summary>
     public static bool SelectedProviderIsPostgres => SelectedProvider == PostgresProvider;

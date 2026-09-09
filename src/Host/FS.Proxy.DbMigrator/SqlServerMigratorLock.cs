@@ -28,6 +28,8 @@ internal sealed partial class SqlServerMigratorLock : IMigratorLock
 
     public string ProviderDisplayName => "sql server";
 
+    public void ResetPooledConnections() => SqlConnection.ClearAllPools();
+
     /// <summary>
     /// Polls until SQL Server accepts a connection. Returns when the server is ready, or when it is
     /// reachable but the target database does not exist yet — EF creates it on the first migrate,
