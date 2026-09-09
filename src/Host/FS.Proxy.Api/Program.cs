@@ -13,10 +13,8 @@ using FSH.Modules.Catalog;
 using FSH.Modules.Tickets;
 using FSH.Modules.Proxies;
 using FSH.Modules.Multitenancy.Features.v1.GetTenantStatus;
-using FS.Proxy.Migrations.Common.DataProtection;
 using FSH.Framework.Persistence;
 using FSH.Framework.Shared.Persistence;
-using Microsoft.AspNetCore.DataProtection;
 using System.Reflection;
 using System.Text.Json.Serialization;
 
@@ -98,32 +96,10 @@ builder.AddHeroPlatform(o =>
     o.EnableRealtime = true;
 });
 
-// FS.Proxy.DbMigrator is normally run standalone (see README-CLI.md / "Migrations / seed, separate
-// step"), outside AppHost's automatic Redis connection-string injection — so even with the same
-// Data Protection application name pinned on both hosts (see below), this host (Redis-backed, when
-// Redis IS configured for it) and the migrator (falling back to local file storage) can end up with
-// two entirely different key stores: credentials the migrator's dev-seed encrypts become
-// permanently undecryptable here ("CryptographicException: key {guid} not found in the key ring").
-// Persisting keys to the application database — the one store both hosts always share regardless of
-// how either is launched — fixes the storage-location mismatch; SetApplicationName still matches
-// FS.Proxy.DbMigrator/Program.cs's identical call exactly, and is required in addition to (not
-// instead of) the shared store, since Data Protection isolates keys by application name even within
-// one physical store. This host never migrates the table itself (DbMigrator owns all schema
-// changes) — it only reads/writes rows once DbMigrator has created it.
-//
-// ConfigureHeroDatabase rather than a bare UseNpgsql/UseSqlServer: it is the one call that picks the
-// provider, points at that provider's migrations assembly AND (on MSSQL) sets
-// UseCompatibilityLevel(170) together, so this context follows DatabaseOptions:Provider exactly like
-// every module context does.
-builder.Services.AddDbContext<DataProtectionKeysDbContext>(o =>
-    o.ConfigureHeroDatabase(
-        builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL,
-        builder.Configuration["DatabaseOptions:ConnectionString"]!,
-        builder.Configuration["DatabaseOptions:MigrationsAssembly"]!,
-        builder.Environment.IsDevelopment()));
-builder.Services.AddDataProtection()
-    .SetApplicationName("FSH.Starter")
-    .PersistKeysToDbContext<DataProtectionKeysDbContext>();
+// Data Protection keys live in the application database, selected by DataProtection:Store in
+// appsettings.json. The framework owns the context, the migrations and the IDbInitializer, so this
+// host does not wire any of it by hand - which is what previously left the key table missing
+// anywhere the DbMigrator had not created it.
 
 // The transactional outbox is framework infrastructure with exactly one owner
 // (EventingDbContext), so the host registers it once for every module (issue #1349).

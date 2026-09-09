@@ -11,7 +11,6 @@
 	<ItemGroup>
 	  <ProjectReference Include="..\..\BuildingBlocks\Persistence\Persistence.csproj" />
 	  <!-- DataProtectionKeysDbContext lives here (provider-neutral); DataProtection\ holds this provider's migrations for it. -->
-	  <ProjectReference Include="..\FS.Proxy.Migrations.Common\FS.Proxy.Migrations.Common.csproj" />
 	  <ProjectReference Include="..\..\Modules\Auditing\Modules.Auditing\Modules.Auditing.csproj" />
 	  <ProjectReference Include="..\..\Modules\Identity\Modules.Identity\Modules.Identity.csproj" />
 	  <ProjectReference Include="..\..\Modules\Multitenancy\Modules.Multitenancy\Modules.Multitenancy.csproj" />

@@ -22,9 +22,7 @@ using FSH.Modules.Webhooks;
 using FSH.Framework.Shared.Persistence;
 using FS.Proxy.DbMigrator;
 using FS.Proxy.DbMigrator.DemoSeed;
-using FS.Proxy.Migrations.Common.DataProtection;
 using Finbuckle.MultiTenant.Abstractions;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -87,17 +85,9 @@ if (string.IsNullOrWhiteSpace(builder.Configuration["DatabaseOptions:ConnectionS
     return 1;
 }
 
-// The Data Protection keys table must exist BEFORE the full host is built: something inside the
-// large DI graph AddModules/AddHeroPlatform assembles below eagerly reads the key ring during
-// host.StartAsync() — earlier than this file's own Step 0/1/2 migration flow ever gets a chance to
-// run — so migrating it as part of that later flow was too late and crashed on the missing
-// DataProtectionKeys table before a single log line of this migrator's own output appeared. A
-// throwaway logger + this file's own database-ready wait (the server may still be cold-starting)
-// keep this self-contained and independent of the full host.
-await BootstrapDataProtectionKeysTableAsync(
-    builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL,
-    builder.Configuration["DatabaseOptions:ConnectionString"]!,
-    builder.Configuration["DatabaseOptions:MigrationsAssembly"]!).ConfigureAwait(false);
+// Data Protection keys live in the application database, selected by DataProtection:Store. The
+// framework registers the context and its IDbInitializer, so the key table is migrated by the same
+// loop as every other schema instead of being bootstrapped by hand here.
 
 // Mirror the API's mediator registration so module handlers wire correctly —
 // some module DbInitializers depend on services that mediator pipelines build.
@@ -172,22 +162,6 @@ builder.AddHeroPlatform(o =>
 // ring"). Persisting keys to the application database — the one store both hosts always share
 // regardless of how either is launched — fixes the storage-location mismatch; SetApplicationName
 // still matches FS.Proxy.Api/Program.cs's identical call exactly, and is required in addition to
-// (not instead of) the shared store, since Data Protection isolates keys by application name even
-// within one physical store.
-//
-// ConfigureHeroDatabase rather than a bare UseNpgsql/UseSqlServer: it is the one call that picks the
-// provider, points at that provider's migrations assembly AND (on MSSQL) sets
-// UseCompatibilityLevel(170) together, so this context follows DatabaseOptions:Provider exactly like
-// every module context does.
-builder.Services.AddDbContext<DataProtectionKeysDbContext>(o =>
-    o.ConfigureHeroDatabase(
-        builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL,
-        builder.Configuration["DatabaseOptions:ConnectionString"]!,
-        builder.Configuration["DatabaseOptions:MigrationsAssembly"]!,
-        builder.Environment.IsDevelopment()));
-builder.Services.AddDataProtection()
-    .SetApplicationName("FSH.Starter")
-    .PersistKeysToDbContext<DataProtectionKeysDbContext>();
 
 // Registers EventingDbContext + its IDbInitializer, so the per-tenant migrate loop below
 // creates the framework outbox/inbox schema alongside every module's (issue #1349).
@@ -390,41 +364,6 @@ finally
     await host.StopAsync().ConfigureAwait(false);
 }
 
-static async Task BootstrapDataProtectionKeysTableAsync(
-    string dbProvider,
-    string connectionString,
-    string migrationsAssembly)
-{
-    using var bootstrapLoggerFactory = Microsoft.Extensions.Logging.LoggerFactory.Create(b => b.AddConsole());
-    var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("DataProtectionBootstrap");
-    // Readiness now goes through the provider abstraction: WaitForDatabaseAsync moved from a
-    // static on PostgresMigratorLock to an IMigratorLock instance member when MSSQL support
-    // landed, so the wait works for whichever provider is configured.
-    var bootstrapLock = MigratorLockFactory.Create(dbProvider);
-    await Console.Out.WriteLineAsync($"[migrator] waiting for {bootstrapLock.ProviderDisplayName} (Data Protection bootstrap)…").ConfigureAwait(false);
-    await bootstrapLock.WaitForDatabaseAsync(connectionString, bootstrapLogger, CancellationToken.None)
-        .ConfigureAwait(false);
-    // Same provider selection as the AddDbContext registration above, so this pre-host bootstrap
-    // migrates the table on whichever engine DatabaseOptions:Provider names. isDevelopment: false —
-    // this throwaway context only runs MigrateAsync, and never wants sensitive-data logging.
-    // Two statements, not a fluent chain: ConfigureHeroDatabase returns the non-generic
-    // DbContextOptionsBuilder, so chaining .Options off it would hand back DbContextOptions rather
-    // than the DbContextOptions<DataProtectionKeysDbContext> the constructor takes.
-    var dataProtectionOptionsBuilder = new DbContextOptionsBuilder<DataProtectionKeysDbContext>();
-    dataProtectionOptionsBuilder.ConfigureHeroDatabase(
-        dbProvider, connectionString, migrationsAssembly, isDevelopment: false);
-    var dataProtectionOptions = dataProtectionOptionsBuilder.Options;
-    await using var dataProtectionDb = new DataProtectionKeysDbContext(dataProtectionOptions);
-    await dataProtectionDb.Database.MigrateAsync(CancellationToken.None).ConfigureAwait(false);
-
-    // MigrateAsync just created the database if this is a cold start, and the failed logins from
-    // before it existed are still cached in the connection pool. Drop them, or the Step 0/1 probes
-    // below inherit that stale "database does not exist" answer and the tenant-catalog migrate
-    // issues a second CREATE DATABASE. See IMigratorLock.ResetPooledConnections.
-    bootstrapLock.ResetPooledConnections();
-
-    await Console.Out.WriteLineAsync("[migrator] Data Protection keys table ready").ConfigureAwait(false);
-}
 
 static async Task LogConnectionIdentityAsync(IMigratorLock providerLock, string connectionString)
 {
