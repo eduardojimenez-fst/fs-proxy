@@ -7,6 +7,7 @@ import { RouteError } from "@/components/route-error";
 import { LoginPage } from "@/pages/login";
 import { DashboardPage } from "@/pages/dashboard";
 import { NotFoundPage } from "@/pages/not-found";
+import { moduleRoutes } from "@/lib/modules";
 import {
   AuditingPermissions,
   BillingPermissions,
@@ -66,175 +67,208 @@ const ConfirmEmailPage = lazyNamed(
 // server endpoint requires, so the UI mirrors server-side authorization. Auth
 // itself is enforced one layer up by <ProtectedRoute />.
 
-export const router = createBrowserRouter([
-  { path: "/login", element: <LoginPage />, errorElement: <RouteError /> },
-  { path: "/forgot-password", element: <ForgotPasswordPage />, errorElement: <RouteError /> },
-  { path: "/reset-password", element: <ResetPasswordPage />, errorElement: <RouteError /> },
-  { path: "/confirm-email", element: <ConfirmEmailPage />, errorElement: <RouteError /> },
-  {
-    element: <ProtectedRoute />,
-    errorElement: <RouteError />,
-    children: [
-      {
-        element: <AppShell />,
-        errorElement: <RouteError />,
-        children: [
-          { index: true, element: <DashboardPage /> },
+let _router: ReturnType<typeof createBrowserRouter> | null = null;
 
-          // Tenants — root-only
-          {
-            path: "tenants",
-            element: (
-              <RouteGuard perms={[MultitenancyPermissions.Tenants.View]}>
-                <TenantsListPage />
-              </RouteGuard>
-            ),
-          },
-          {
-            // /tenants/new — creation is now a dialog on the list page.
-            // Redirect any bookmarked links back to /tenants.
-            path: "tenants/new",
-            element: <Navigate to="/tenants" replace />,
-          },
-          {
-            path: "tenants/:id",
-            element: (
-              <RouteGuard perms={[MultitenancyPermissions.Tenants.View]}>
-                <TenantDetailPage />
-              </RouteGuard>
-            ),
-          },
+/**
+ * The data router, built on first call rather than at import time.
+ *
+ * `main.tsx` awaits `loadRuntimeConfig()` in its module *body*, but ESM
+ * evaluates the whole static-import graph (main -> App -> routes) before that
+ * body runs, and top-level await only suspends the awaiting module's own body.
+ * A router built at module scope would therefore run before the runtime config
+ * exists, and anything in the route table that reads `env` would throw during
+ * boot with no error boundary above it. Building lazily defers construction to
+ * `App`'s first render, which is after the await.
+ *
+ * A module-level singleton rather than `useState(createRouter)`: StrictMode
+ * double-invokes a useState initializer in dev, which would build two routers
+ * and leave two `history` listeners attached.
+ */
+export function getRouter() {
+  return (_router ??= createBrowserRouter([
+    { path: "/login", element: <LoginPage />, errorElement: <RouteError /> },
+    { path: "/forgot-password", element: <ForgotPasswordPage />, errorElement: <RouteError /> },
+    { path: "/reset-password", element: <ResetPasswordPage />, errorElement: <RouteError /> },
+    { path: "/confirm-email", element: <ConfirmEmailPage />, errorElement: <RouteError /> },
+    {
+      element: <ProtectedRoute />,
+      errorElement: <RouteError />,
+      children: [
+        {
+          element: <AppShell />,
+          errorElement: <RouteError />,
+          children: [
+            { index: true, element: <DashboardPage /> },
 
-          // Users
-          {
-            path: "users",
-            element: (
-              <RouteGuard perms={[IdentityPermissions.Users.View]}>
-                <UsersListPage />
-              </RouteGuard>
-            ),
-          },
-          {
-            // /users/new — creation is now a dialog on the list page.
-            // Redirect any bookmarked links back to /users.
-            path: "users/new",
-            element: <Navigate to="/users" replace />,
-          },
-          {
-            path: "users/:id",
-            element: (
-              <RouteGuard perms={[IdentityPermissions.Users.View]}>
-                <UserDetailPage />
-              </RouteGuard>
-            ),
-          },
+            ...moduleRoutes("multitenancy", [
+              // Tenants — root-only
+              {
+                path: "tenants",
+                element: (
+                  <RouteGuard perms={[MultitenancyPermissions.Tenants.View]}>
+                    <TenantsListPage />
+                  </RouteGuard>
+                ),
+              },
+              {
+                // /tenants/new — creation is now a dialog on the list page.
+                // Redirect any bookmarked links back to /tenants.
+                path: "tenants/new",
+                element: <Navigate to="/tenants" replace />,
+              },
+              {
+                path: "tenants/:id",
+                element: (
+                  <RouteGuard perms={[MultitenancyPermissions.Tenants.View]}>
+                    <TenantDetailPage />
+                  </RouteGuard>
+                ),
+              },
+            ]),
 
-          // Roles
-          {
-            path: "roles",
-            element: (
-              <RouteGuard perms={[IdentityPermissions.Roles.View]}>
-                <RolesListPage />
-              </RouteGuard>
-            ),
-          },
-          {
-            // /roles/new — creation is now a dialog on the list page.
-            // Redirect any bookmarked links back to /roles.
-            path: "roles/new",
-            element: <Navigate to="/roles" replace />,
-          },
-          {
-            path: "roles/:id",
-            element: (
-              <RouteGuard perms={[IdentityPermissions.Roles.View]}>
-                <RoleDetailPage />
-              </RouteGuard>
-            ),
-          },
+            // Users
+            {
+              path: "users",
+              element: (
+                <RouteGuard perms={[IdentityPermissions.Users.View]}>
+                  <UsersListPage />
+                </RouteGuard>
+              ),
+            },
+            {
+              // /users/new — creation is now a dialog on the list page.
+              // Redirect any bookmarked links back to /users.
+              path: "users/new",
+              element: <Navigate to="/users" replace />,
+            },
+            {
+              path: "users/:id",
+              element: (
+                <RouteGuard perms={[IdentityPermissions.Users.View]}>
+                  <UserDetailPage />
+                </RouteGuard>
+              ),
+            },
 
-          // Billing
-          {
-            path: "billing",
-            element: (
-              <RouteGuard perms={[BillingPermissions.View]}>
-                <BillingLayout />
-              </RouteGuard>
-            ),
-            children: [
-              { index: true, element: <Navigate to="/billing/invoices" replace /> },
-              { path: "plans", element: <PlansListPage /> },
-              { path: "invoices", element: <InvoicesListPage /> },
-              { path: "invoices/:invoiceId", element: <InvoiceDetailPage /> },
-              { path: "topups", element: <TopupsListPage /> },
-            ],
-          },
+            // Roles
+            {
+              path: "roles",
+              element: (
+                <RouteGuard perms={[IdentityPermissions.Roles.View]}>
+                  <RolesListPage />
+                </RouteGuard>
+              ),
+            },
+            {
+              // /roles/new — creation is now a dialog on the list page.
+              // Redirect any bookmarked links back to /roles.
+              path: "roles/new",
+              element: <Navigate to="/roles" replace />,
+            },
+            {
+              path: "roles/:id",
+              element: (
+                <RouteGuard perms={[IdentityPermissions.Roles.View]}>
+                  <RoleDetailPage />
+                </RouteGuard>
+              ),
+            },
 
-          // Impersonation
-          {
-            path: "impersonation",
-            element: (
-              <RouteGuard perms={[IdentityPermissions.Impersonation.View]}>
-                <ImpersonationListPage />
-              </RouteGuard>
-            ),
-          },
+            ...moduleRoutes("billing", [
+              // Billing
+              {
+                path: "billing",
+                element: (
+                  <RouteGuard perms={[BillingPermissions.View]}>
+                    <BillingLayout />
+                  </RouteGuard>
+                ),
+                children: [
+                  { index: true, element: <Navigate to="/billing/invoices" replace /> },
+                  { path: "plans", element: <PlansListPage /> },
+                  { path: "invoices", element: <InvoicesListPage /> },
+                  { path: "invoices/:invoiceId", element: <InvoiceDetailPage /> },
+                  { path: "topups", element: <TopupsListPage /> },
+                ],
+              },
+            ]),
 
-          // Audits — detail opens as a side sheet on the list page.
-          // Redirect any bookmarked /audits/:id links back to /audits.
-          {
-            path: "audits",
-            element: (
-              <RouteGuard perms={[AuditingPermissions.AuditTrails.View]}>
-                <AuditsListPage />
-              </RouteGuard>
-            ),
-          },
-          {
-            path: "audits/:id",
-            element: <Navigate to="/audits" replace />,
-          },
+            ...moduleRoutes("impersonation", [
+              // Impersonation
+              {
+                path: "impersonation",
+                element: (
+                  <RouteGuard perms={[IdentityPermissions.Impersonation.View]}>
+                    <ImpersonationListPage />
+                  </RouteGuard>
+                ),
+              },
+            ]),
 
-          // Webhooks — list/detail both read subscriptions, which the server
-          // gates on Webhooks.View (granted to Basic by default).
-          {
-            path: "webhooks",
-            element: (
-              <RouteGuard perms={[WebhooksPermissions.Subscriptions.View]}>
-                <WebhooksListPage />
-              </RouteGuard>
-            ),
-          },
-          {
-            path: "webhooks/:id",
-            element: (
-              <RouteGuard perms={[WebhooksPermissions.Subscriptions.View]}>
-                <WebhookDetailPage />
-              </RouteGuard>
-            ),
-          },
+            ...moduleRoutes("auditing", [
+              // Audits — detail opens as a side sheet on the list page.
+              // Redirect any bookmarked /audits/:id links back to /audits.
+              {
+                path: "audits",
+                element: (
+                  <RouteGuard perms={[AuditingPermissions.AuditTrails.View]}>
+                    <AuditsListPage />
+                  </RouteGuard>
+                ),
+              },
+              {
+                path: "audits/:id",
+                element: <Navigate to="/audits" replace />,
+              },
+            ]),
 
-          // Notifications inbox — available to every signed-in user
-          { path: "notifications", element: <NotificationsInboxPage /> },
+            ...moduleRoutes("webhooks", [
+              // Webhooks — list/detail both read subscriptions, which the server
+              // gates on Webhooks.View (granted to Basic by default).
+              {
+                path: "webhooks",
+                element: (
+                  <RouteGuard perms={[WebhooksPermissions.Subscriptions.View]}>
+                    <WebhooksListPage />
+                  </RouteGuard>
+                ),
+              },
+              {
+                path: "webhooks/:id",
+                element: (
+                  <RouteGuard perms={[WebhooksPermissions.Subscriptions.View]}>
+                    <WebhookDetailPage />
+                  </RouteGuard>
+                ),
+              },
+            ]),
 
-          // Health — public probes; signed-in users only see this from inside the app
-          { path: "health", element: <HealthPage /> },
+            ...moduleRoutes("notifications", [
+              // Notifications inbox — available to every signed-in user
+              { path: "notifications", element: <NotificationsInboxPage /> },
+            ]),
 
-          // Settings — account-scoped; any signed-in user can manage their own profile + sessions + 2FA
-          {
-            path: "settings",
-            element: <SettingsLayout />,
-            children: [
-              { index: true, element: <Navigate to="/settings/profile" replace /> },
-              { path: "profile", element: <ProfileSettings /> },
-              { path: "security", element: <SecuritySettings /> },
-              { path: "sessions", element: <SessionsSettings /> },
-              { path: "appearance", element: <AppearanceSettings /> },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-  { path: "*", element: <NotFoundPage /> },
-]);
+            ...moduleRoutes("health", [
+              // Health — public probes; signed-in users only see this from inside the app
+              { path: "health", element: <HealthPage /> },
+            ]),
+
+            // Settings — account-scoped; any signed-in user can manage their own profile + sessions + 2FA
+            {
+              path: "settings",
+              element: <SettingsLayout />,
+              children: [
+                { index: true, element: <Navigate to="/settings/profile" replace /> },
+                { path: "profile", element: <ProfileSettings /> },
+                { path: "security", element: <SecuritySettings /> },
+                { path: "sessions", element: <SessionsSettings /> },
+                { path: "appearance", element: <AppearanceSettings /> },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    { path: "*", element: <NotFoundPage /> },
+  ]));
+}

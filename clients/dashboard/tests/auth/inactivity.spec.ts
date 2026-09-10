@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { seedAuthedSession, TEST_USER } from "../helpers/auth-seed";
-import { installShellMocks } from "../helpers/shell-mocks";
+import { installShellMocks, mockRuntimeConfig } from "../helpers/shell-mocks";
 
 // Drive the inactivity feature with tiny durations injected via /config.json:
 // idle 2s → a 3s warning countdown → auto sign-out. The guard mounts in the
@@ -9,19 +9,6 @@ const IDLE_MS = 2_000;
 const WARNING_MS = 3_000;
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/config.json", (route) =>
-    route.fulfill({
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        apiBase: "",
-        defaultTenant: "root",
-        demoMode: false,
-        inactivityIdleMs: IDLE_MS,
-        inactivityWarningMs: WARNING_MS,
-      }),
-    }),
-  );
   await seedAuthedSession(page, TEST_USER);
   // Defensive catch-all so a stray protected call can't 401→logout and race the
   // idle timer; the specific shell mocks register after this and win.
@@ -29,6 +16,12 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({ status: 200, headers: { "Content-Type": "application/json" }, body: "[]" }),
   );
   await installShellMocks(page);
+  // After the shell mocks: Playwright runs the most recently registered
+  // handler first, and installShellMocks serves a baseline config.
+  await mockRuntimeConfig(page, {
+    inactivityIdleMs: IDLE_MS,
+    inactivityWarningMs: WARNING_MS,
+  });
 });
 
 test.describe("inactivity auto-logout", () => {

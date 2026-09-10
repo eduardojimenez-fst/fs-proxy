@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mockJsonResponse, mockProblemDetails } from "../helpers/api-mocks";
+import { mockRuntimeConfig } from "../helpers/shell-mocks";
 import { seedAuthedSession, TEST_USER } from "../helpers/auth-seed";
 
 const TENANT_ID = "acme";
@@ -76,6 +77,10 @@ const THEME_DEFAULT = {
 };
 
 test.beforeEach(async ({ page }) => {
+  // Hermetic runtime config: this spec hand-rolls its mocks instead of using
+  // installShellMocks, so it stubs /config.json itself — otherwise a project
+  // that hides modules in public/config.json breaks it.
+  await mockRuntimeConfig(page);
   await seedAuthedSession(page, { ...TEST_USER, permissions: ROOT_PERMS });
   await mockJsonResponse(page, "**/api/v1/identity/profile", {
     id: TEST_USER.sub,

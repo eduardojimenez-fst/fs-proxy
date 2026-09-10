@@ -18,6 +18,7 @@ import {
   MultitenancyPermissions,
   WebhooksPermissions,
 } from "@/lib/permissions";
+import { isModuleEnabled, type ModuleKey } from "@/lib/modules";
 
 /** A single nav destination — label, route, icon, optional perm guard. */
 export type NavSpec = {
@@ -26,6 +27,13 @@ export type NavSpec = {
   icon: LucideIcon;
   /** One or more permissions the user must hold to see this item. */
   perms?: readonly string[];
+  /**
+   * UI module this item belongs to. Hidden when the deployment lists the key in
+   * `disabledModules` (config.json), independently of the user's permissions —
+   * permissions are per-role, this is per-deployment. Items without a `module`
+   * are never hidden this way. See lib/modules.ts.
+   */
+  module?: ModuleKey;
 };
 
 /** A collapsible section that groups related NavSpecs. */
@@ -59,6 +67,7 @@ export const sections: NavSection[] = [
         label: "Tenants",
         icon: Building2,
         perms: [MultitenancyPermissions.Tenants.View],
+        module: "multitenancy",
       },
     ],
   },
@@ -84,6 +93,7 @@ export const sections: NavSection[] = [
         label: "Impersonation",
         icon: UserCog,
         perms: [IdentityPermissions.Impersonation.View],
+        module: "impersonation",
       },
     ],
   },
@@ -97,23 +107,27 @@ export const sections: NavSection[] = [
         label: "Billing",
         icon: Receipt,
         perms: [BillingPermissions.View],
+        module: "billing",
       },
       {
         to: "/webhooks",
         label: "Webhooks",
         icon: Webhook,
         perms: [WebhooksPermissions.Subscriptions.View],
+        module: "webhooks",
       },
       {
         to: "/audits",
         label: "Audits",
         icon: ScrollText,
         perms: [AuditingPermissions.AuditTrails.View],
+        module: "auditing",
       },
       {
         to: "/health",
         label: "Health",
         icon: Activity,
+        module: "health",
       },
     ],
   },
@@ -147,9 +161,15 @@ export function isNavItemActive(item: NavSpec, pathname: string): boolean {
   return pathname === item.to || pathname.startsWith(`${item.to}/`);
 }
 
-/** Filter nav items (and sections) based on granted permissions. */
+/**
+ * Filter nav items by the deployment's enabled modules AND the user's granted
+ * permissions. Both sidebar.tsx and mobile-nav.tsx route through here, so the
+ * module gate covers desktop and the mobile drawer from this one place; each
+ * then drops any section left with no items.
+ */
 export function filterNavSpec(items: NavSpec[], granted: readonly string[]): NavSpec[] {
   return items.filter((item) => {
+    if (!isModuleEnabled(item.module)) return false;
     if (!item.perms || item.perms.length === 0) return true;
     return item.perms.every((p) => granted.includes(p));
   });

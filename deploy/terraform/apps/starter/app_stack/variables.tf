@@ -726,6 +726,18 @@ variable "dashboard_demo_mode" {
   default     = false
 }
 
+variable "dashboard_disabled_modules" {
+  type        = list(string)
+  description = "UI module keys hidden from the tenant dashboard (e.g. [\"billing\", \"chat\"]). Cosmetic only -- the API stays registered and permission-guarded. Valid keys: clients/dashboard/src/lib/modules.ts. Empty hides nothing."
+  default     = []
+}
+
+variable "admin_disabled_modules" {
+  type        = list(string)
+  description = "UI module keys hidden from the admin console (e.g. [\"billing\", \"webhooks\", \"health\"]). Cosmetic only -- the API stays registered and permission-guarded. Valid keys: clients/admin/src/lib/modules.ts. Empty hides nothing."
+  default     = []
+}
+
 variable "dashboard_url" {
   type        = string
   description = "Override the dashboard origin used for API CORS when enable_dashboard_site is false (SPA hosted elsewhere)."

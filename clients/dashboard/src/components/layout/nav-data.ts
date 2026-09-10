@@ -20,6 +20,7 @@ import {
   Wifi,
 } from "lucide-react";
 import { ALL_TRASH_PERMISSIONS } from "@/lib/trash-permissions";
+import { areAnyModulesEnabled, isModuleEnabled, type ModuleKey } from "@/lib/modules";
 
 export type NavSpec = {
   to: string;
@@ -39,6 +40,19 @@ export type NavSpec = {
    * the user can reach any one of them. Combined with `perm` via AND.
    */
   anyPerm?: readonly string[];
+  /**
+   * UI module this item belongs to. Hidden when the deployment lists the key in
+   * `disabledModules` (config.json), independently of permissions — permissions
+   * are per-role, this is per-deployment. Items without a `module` are never
+   * hidden this way. See lib/modules.ts.
+   */
+  module?: ModuleKey;
+  /**
+   * Visible while *at least one* of these modules is enabled. For an entry that
+   * fronts several modules at once (Trash, whose tabs belong to different
+   * modules). Same OR shape as `anyPerm`; combined with `module` via AND.
+   */
+  anyModule?: readonly ModuleKey[];
 };
 
 export type NavSection = {
@@ -57,8 +71,20 @@ export const topNavTop: NavSpec[] = [
   // Each gate mirrors the permission the page's primary list endpoint enforces
   // server-side (Chat → channels list, Files → /files/mine). Same convention
   // as trash-permissions.ts: if the endpoint's permission changes, mirror it.
-  { to: "/chat", label: "Chat", icon: MessageCircle, perm: "Permissions.Chat.Channels.View" },
-  { to: "/files", label: "My Files", icon: FolderOpen, perm: "Permissions.Files.Upload" },
+  {
+    to: "/chat",
+    label: "Chat",
+    icon: MessageCircle,
+    perm: "Permissions.Chat.Channels.View",
+    module: "chat",
+  },
+  {
+    to: "/files",
+    label: "My Files",
+    icon: FolderOpen,
+    perm: "Permissions.Files.Upload",
+    module: "files",
+  },
 ];
 
 export const topNavBottom: NavSpec[] = [
@@ -73,10 +99,28 @@ export const sections: NavSection[] = [
     icon: Activity,
     items: [
       // Live activity is SSE-backed; the stream is auth-only (no permission), so no gate.
-      { to: "/activity", label: "Live activity", icon: Activity },
-      { to: "/subscription", label: "Subscription", icon: CreditCard, perm: "Permissions.Billing.View" },
-      { to: "/wallet", label: "WhatsApp wallet", icon: Wallet, perm: "Permissions.Billing.View" },
-      { to: "/invoices", label: "Invoices", icon: Receipt, perm: "Permissions.Billing.View" },
+      { to: "/activity", label: "Live activity", icon: Activity, module: "activity" },
+      {
+        to: "/subscription",
+        label: "Subscription",
+        icon: CreditCard,
+        perm: "Permissions.Billing.View",
+        module: "billing",
+      },
+      {
+        to: "/wallet",
+        label: "WhatsApp wallet",
+        icon: Wallet,
+        perm: "Permissions.Billing.View",
+        module: "billing",
+      },
+      {
+        to: "/invoices",
+        label: "Invoices",
+        icon: Receipt,
+        perm: "Permissions.Billing.View",
+        module: "billing",
+      },
     ],
   },
   {
@@ -84,9 +128,27 @@ export const sections: NavSection[] = [
     caption: "Catalog",
     icon: Package,
     items: [
-      { to: "/catalog/products", label: "Products", icon: Package, perm: "Permissions.Catalog.Products.View" },
-      { to: "/catalog/brands", label: "Brands", icon: Tags, perm: "Permissions.Catalog.Brands.View" },
-      { to: "/catalog/categories", label: "Categories", icon: FolderTree, perm: "Permissions.Catalog.Categories.View" },
+      {
+        to: "/catalog/products",
+        label: "Products",
+        icon: Package,
+        perm: "Permissions.Catalog.Products.View",
+        module: "catalog",
+      },
+      {
+        to: "/catalog/brands",
+        label: "Brands",
+        icon: Tags,
+        perm: "Permissions.Catalog.Brands.View",
+        module: "catalog",
+      },
+      {
+        to: "/catalog/categories",
+        label: "Categories",
+        icon: FolderTree,
+        perm: "Permissions.Catalog.Categories.View",
+        module: "catalog",
+      },
     ],
   },
   {
@@ -94,7 +156,13 @@ export const sections: NavSection[] = [
     caption: "Helpdesk",
     icon: Ticket,
     items: [
-      { to: "/tickets", label: "Tickets", icon: Ticket, perm: "Permissions.Tickets.View" },
+      {
+        to: "/tickets",
+        label: "Tickets",
+        icon: Ticket,
+        perm: "Permissions.Tickets.View",
+        module: "tickets",
+      },
     ],
   },
   {
@@ -116,20 +184,36 @@ export const sections: NavSection[] = [
     icon: HeartPulse,
     items: [
       // Health hits the anonymous /health/ready probe — visible to everyone.
-      { to: "/system/health", label: "Health", icon: HeartPulse },
-      { to: "/system/audits", label: "Audit trail", icon: ScrollText, perm: "Permissions.AuditTrails.View" },
+      { to: "/system/health", label: "Health", icon: HeartPulse, module: "health" },
+      {
+        to: "/system/audits",
+        label: "Audit trail",
+        icon: ScrollText,
+        perm: "Permissions.AuditTrails.View",
+        module: "auditing",
+      },
       { to: "/system/sessions", label: "Sessions", icon: Wifi, perm: "Permissions.Sessions.ViewAll" },
       // Trash fronts five tabs, each gated on a different resource's restore /
       // view-trash permission. Show the entry if the user can reach any tab; the
       // page hides the individual tabs they can't (see trash-permissions.ts).
-      { to: "/system/trash", label: "Trash", icon: Trash2, anyPerm: ALL_TRASH_PERMISSIONS },
+      {
+        to: "/system/trash",
+        label: "Trash",
+        icon: Trash2,
+        anyPerm: ALL_TRASH_PERMISSIONS,
+        anyModule: ["catalog", "tickets", "files"],
+      },
     ],
   },
 ];
 
-/** True when the user satisfies the item's gates: the single `perm` (if any)
- *  AND at least one of `anyPerm` (if any). Ungated items are always visible. */
+/** True when the item passes both gates: the deployment's enabled modules
+ *  (`module` AND `anyModule`) and the user's permissions (`perm` AND one of
+ *  `anyPerm`). Ungated items are always visible. Module checks come first —
+ *  a module the deployment turned off is hidden regardless of permissions. */
 function isNavItemVisible(item: NavSpec, permissions: readonly string[]): boolean {
+  if (!isModuleEnabled(item.module)) return false;
+  if (!areAnyModulesEnabled(item.anyModule)) return false;
   if (item.perm && !permissions.includes(item.perm)) return false;
   if (item.anyPerm && !item.anyPerm.some((p) => permissions.includes(p))) return false;
   return true;

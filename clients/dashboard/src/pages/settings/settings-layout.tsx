@@ -13,6 +13,7 @@ import type { LucideIcon } from "lucide-react";
 import { EntityPageHeader } from "@/components/list";
 import { useAuth } from "@/auth/use-auth";
 import { cn } from "@/lib/cn";
+import { isModuleEnabled, type ModuleKey } from "@/lib/modules";
 
 type Tab = {
   to: string;
@@ -26,6 +27,12 @@ type Tab = {
    * never land on a page the API would reject with 403.
    */
   perm?: string;
+  /**
+   * UI module this tab belongs to — hidden when the deployment disabled it
+   * (config.json `disabledModules`). Its route is dropped in routes.tsx too,
+   * so leaving the tab would link to a 404. See lib/modules.ts.
+   */
+  module?: ModuleKey;
 };
 
 const TABS: Tab[] = [
@@ -35,8 +42,21 @@ const TABS: Tab[] = [
   // Tenant-wide branding (palette + logos served on sign-in), distinct from the
   // per-user Appearance prefs above. Gated on the same permission the /theme
   // endpoints enforce server-side.
-  { to: "/settings/branding", label: "Branding", hint: "Tenant colours and logos", icon: Brush, perm: "Permissions.Tenants.UpdateTheme" },
-  { to: "/settings/notifications", label: "Notifications", hint: "How we reach you", icon: Bell },
+  {
+    to: "/settings/branding",
+    label: "Branding",
+    hint: "Tenant colours and logos",
+    icon: Brush,
+    perm: "Permissions.Tenants.UpdateTheme",
+    module: "multitenancy",
+  },
+  {
+    to: "/settings/notifications",
+    label: "Notifications",
+    hint: "How we reach you",
+    icon: Bell,
+    module: "notifications",
+  },
   { to: "/settings/api-keys", label: "API keys", hint: "Personal access tokens", icon: KeyRound },
 ];
 
@@ -52,9 +72,12 @@ export function SettingsLayout() {
   const location = useLocation();
   const { user } = useAuth();
   const perms = user?.permissions ?? [];
-  // Drop tabs the user can't reach, same gate the sidebar uses. `branding`
-  // hides for users without Tenants.UpdateTheme.
-  const tabs = TABS.filter((t) => !t.perm || perms.includes(t.perm));
+  // Drop tabs the deployment disabled, then the ones the user can't reach —
+  // same two gates the sidebar uses. `branding` hides for users without
+  // Tenants.UpdateTheme.
+  const tabs = TABS.filter(
+    (t) => isModuleEnabled(t.module) && (!t.perm || perms.includes(t.perm)),
+  );
   const activeIndex = Math.max(
     0,
     tabs.findIndex((t) => location.pathname.startsWith(t.to)),
