@@ -4,7 +4,7 @@ import {
   isImpersonationRevokedError,
   isTenantDeactivatedError,
 } from "@/lib/api-client";
-import { router } from "@/routes";
+import { getRouter } from "@/routes";
 
 const TENANT_DEACTIVATED_PATH = "/tenant-deactivated";
 const IMPERSONATION_ENDED_PATH = "/impersonation-ended";
@@ -17,6 +17,11 @@ const IMPERSONATION_ENDED_PATH = "/impersonation-ended";
 // here — clearing flips isAuthenticated false and lets ProtectedRoute race us
 // to /login; the terminal pages clear it on their "Back to sign in" action.
 function handleGlobalError(error: unknown) {
+  // getRouter() rather than a module-scope router: this file is imported during
+  // boot, before the runtime config resolves. Safe to call here because a query
+  // can only fail after React has rendered, i.e. after the router was built.
+  const router = getRouter();
+
   if (isTenantDeactivatedError(error)) {
     if (router.state.location.pathname === TENANT_DEACTIVATED_PATH) return;
     void router.navigate(TENANT_DEACTIVATED_PATH, { replace: true });

@@ -1,4 +1,5 @@
 {
   "apiBase": "${FSH_API_URL}",
-  "defaultTenant": "${FSH_DEFAULT_TENANT}"
+  "defaultTenant": "${FSH_DEFAULT_TENANT}",
+  "disabledModules": "${FSH_DISABLED_MODULES}"
 }

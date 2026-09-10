@@ -12,7 +12,7 @@ import { queryClient } from "@/lib/query-client";
 import { AuthProvider } from "@/auth/auth-context";
 import { ThemeProvider, useTheme } from "@/components/theme/theme-provider";
 import { CommandPaletteProvider } from "@/components/command-palette/command-palette";
-import { router } from "@/routes";
+import { getRouter } from "@/routes";
 
 export function App() {
   return (
@@ -20,7 +20,7 @@ export function App() {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           <CommandPaletteProvider>
-            <RouterProvider router={router} />
+            <RouterProvider router={getRouter()} />
             <FshToaster />
           </CommandPaletteProvider>
         </AuthProvider>

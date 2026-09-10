@@ -3,7 +3,7 @@
 Operator/SuperAdmin-facing console. Read `frontend/shared.md` first; this file is only the divergences.
 
 - **Port** 5173 · dev proxy target `http://localhost:5030` (HTTP) · localStorage prefix `fsh.admin.*` · login header `X-FSH-App: admin`.
-- **Env** (`src/env.ts`): `{ apiBase, defaultTenant, dashboardUrl }`. `dashboardUrl` is used for the one-way impersonation handoff into the dashboard app.
+- **Env** (`src/env.ts`): `{ apiBase, defaultTenant, dashboardUrl, inactivityIdleMs, inactivityWarningMs, disabledModules }`. `dashboardUrl` is used for the one-way impersonation handoff into the dashboard app.
 
 ## Forms — react-hook-form + zod
 
@@ -24,8 +24,28 @@ Form layout primitives live in `src/components/list/` (`PageHeader`, `Field`, `F
 
 ## Routing & realtime
 
+- `routes.tsx` exports **`getRouter()`**, not a `router` const — see the load-order warning in
+  `shared.md`. `App.tsx` calls it during render.
 - Routes wrap elements in `<RouteGuard perms={…}>` (no per-route Suspense wrapper).
 - `RealtimeProvider` is mounted in `App.tsx` and wires only `["NotificationCreated"]`.
+
+## Module keys used here (`disabledModules`)
+
+See `shared.md` for the mechanism. What each key hides in this app:
+
+| Key | Nav / routes | Also |
+|---|---|---|
+| `multitenancy` | Tenants (`/tenants*`) | the Tenants pivot card + its KPI tile on `/` |
+| `impersonation` | Identity → Impersonation | — |
+| `billing` | Operations → Billing (`/billing` + children) | the Billing + Invoices pivot cards, 3 KPI tiles, and their `useQuery` calls |
+| `webhooks` | Operations → Webhooks | — |
+| `auditing` | Operations → Audits | — |
+| `health` | Operations → Health | — |
+| `notifications` | `/notifications` (no nav item) | the bell's "View all" link — its only entry point. The bell itself stays. |
+
+Hiding all four Operations keys drops the whole accordion section. `/`, Users, Roles and Settings are
+never hidable. `NAV_ITEMS` / `filterNavItems` in `nav-items.ts` are `@deprecated` with zero importers —
+don't add module keys there.
 
 ## Theme
 
@@ -35,4 +55,5 @@ Cool-cast neutrals (hue 240, small non-zero chroma — **not** chroma 0), a sing
 
 - Use RHF + zod for any form.
 - If the endpoint requires a permission, mirror the constant in `src/lib/permissions.ts` (and `PERMISSION_CATALOG` if it belongs in the role editor) and wrap the route in `<RouteGuard perms={[…]}>`.
+- If the page belongs to a hidable module, tag its nav item and route with `module` (`src/lib/modules.ts`).
 - Playwright: `seedAuthedSession` here also pre-seeds `fsh.admin.permissions` so `RouteGuard` passes on first paint.

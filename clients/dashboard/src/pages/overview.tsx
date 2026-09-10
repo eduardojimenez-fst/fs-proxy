@@ -45,6 +45,7 @@ import { EntityDetailSection } from "@/components/list";
 import { useAuth } from "@/auth/use-auth";
 import { useSseEvents, useSseStatus, type SseEvent, type SseStatus } from "@/sse/sse-context";
 import { cn } from "@/lib/cn";
+import { isModuleEnabled, type ModuleKey } from "@/lib/modules";
 
 // ────────────────────────────────────────────────────────────────────────
 // Shaping helpers — pure, tested via memoization at the call sites.
@@ -660,6 +661,14 @@ type QuickAction = {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   tone: StatTone;
+  /** Hidden when the deployment disabled this module (config.json). */
+  module?: ModuleKey;
+  /**
+   * Permission the destination page's list endpoint enforces, mirroring the
+   * sidebar gate in layout/nav-data.ts. These tiles were previously ungated,
+   * so a Basic member was offered "Invite users" and got a 403 page.
+   */
+  perm?: string;
 };
 
 const QUICK_ACTIONS: QuickAction[] = [
@@ -669,6 +678,7 @@ const QUICK_ACTIONS: QuickAction[] = [
     description: "Add teammates, assign roles.",
     icon: UsersRound,
     tone: "info",
+    perm: "Permissions.Users.Update",
   },
   {
     to: "/catalog/products",
@@ -676,6 +686,8 @@ const QUICK_ACTIONS: QuickAction[] = [
     description: "Products, brands, categories.",
     icon: Package,
     tone: "success",
+    module: "catalog",
+    perm: "Permissions.Catalog.Products.View",
   },
   {
     to: "/subscription",
@@ -683,6 +695,8 @@ const QUICK_ACTIONS: QuickAction[] = [
     description: "Plan, usage, invoices.",
     icon: CreditCard,
     tone: "primary",
+    module: "billing",
+    perm: "Permissions.Billing.View",
   },
   {
     to: "/activity",
@@ -690,13 +704,19 @@ const QUICK_ACTIONS: QuickAction[] = [
     description: "Real-time event stream.",
     icon: Activity,
     tone: "warning",
+    module: "activity",
   },
 ];
 
 function QuickActionsBody() {
+  const { user } = useAuth();
+  const permissions = user?.permissions ?? [];
+  const actions = QUICK_ACTIONS.filter(
+    (a) => isModuleEnabled(a.module) && (!a.perm || permissions.includes(a.perm)),
+  );
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-      {QUICK_ACTIONS.map((a) => (
+      {actions.map((a) => (
         <Link
           key={a.to}
           to={a.to}
@@ -944,16 +964,24 @@ export function OverviewPage() {
   const { status: sseStatus, eventCount } = useSseStatus();
   const { events } = useSseEvents();
 
+  // Every widget these feed is gated on `billing` below, so an ungated fetch
+  // would only produce requests nothing renders. See lib/modules.ts.
+  const billingEnabled = isModuleEnabled("billing");
+  const activityEnabled = isModuleEnabled("activity");
+  const auditingEnabled = isModuleEnabled("auditing");
+
   const usage = useQuery({
     queryKey: ["billing", "usage"],
     queryFn: () => getUsageSnapshots(),
     staleTime: 60_000,
+    enabled: billingEnabled,
   });
 
   const subscription = useQuery({
     queryKey: ["billing", "subscription", "me"],
     queryFn: () => getMySubscription(),
     staleTime: 60_000,
+    enabled: billingEnabled,
   });
 
   // Tenant status drives the "Valid for" stat card and its tone — the same
@@ -964,6 +992,7 @@ export function OverviewPage() {
     queryKey: ["tenant", "me", "status"],
     queryFn: () => getMyStatus(),
     staleTime: 60_000,
+    enabled: billingEnabled,
   });
 
   // First-run state — show only when the tenant has no active subscription
@@ -977,6 +1006,7 @@ export function OverviewPage() {
     setDismissed(readDismissed(tenantId));
   }, [tenantId]);
   const showFirstRun =
+    billingEnabled &&
     !dismissed &&
     !subscription.isLoading &&
     !subscription.isError &&
@@ -995,6 +1025,9 @@ export function OverviewPage() {
     const avg = rows.reduce((sum, r) => sum + r.utilization, 0) / rows.length;
     return { resourceCount: rows.length, avgUtilization: avg, overage };
   }, [rows]);
+
+  // 3 billing cards + 1 SSE card; don't leave a 4-column grid holding one tile.
+  const statGridClass = billingEnabled ? "grid-cols-2 md:grid-cols-4" : "grid-cols-1";
 
   const refreshing = usage.isFetching || subscription.isFetching || status.isFetching;
   const onRefresh = () => {
@@ -1118,51 +1151,65 @@ export function OverviewPage() {
           </h1>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
-            <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
-            Refresh
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/activity">
-              <Activity className="mr-1.5 size-3.5" />
-              View activity
-            </Link>
-          </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/system/audits">
-              <ScrollText className="mr-1.5 size-3.5" />
-              View audits
-            </Link>
-          </Button>
+          {/* Only refetches the billing queries, so it has nothing to do
+              when that module is hidden. */}
+          {billingEnabled ? (
+            <Button variant="outline" size="sm" disabled={refreshing} onClick={onRefresh}>
+              <RefreshCw className={cn("mr-1.5 size-3.5", refreshing && "animate-spin")} />
+              Refresh
+            </Button>
+          ) : null}
+          {activityEnabled ? (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/activity">
+                <Activity className="mr-1.5 size-3.5" />
+                View activity
+              </Link>
+            </Button>
+          ) : null}
+          {auditingEnabled ? (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/system/audits">
+                <ScrollText className="mr-1.5 size-3.5" />
+                View audits
+              </Link>
+            </Button>
+          ) : null}
         </div>
       </header>
 
-      {/* ── Stats row — 4 cards ─────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        <StatCard
-          index={0}
-          tone="primary"
-          icon={Server}
-          label="Plan"
-          value={planValue}
-          sublabel={planSub}
-        />
-        <StatCard
-          index={1}
-          tone={status.isLoading || status.isError || !status.data ? "success" : validity.tone}
-          icon={Calendar}
-          label="Valid for"
-          value={validityValue}
-          sublabel={validitySub}
-        />
-        <StatCard
-          index={2}
-          tone="warning"
-          icon={Gauge}
-          label="Resources"
-          value={resourcesValue}
-          sublabel={resourcesSub}
-        />
+      {/* ── Stats row ───────────────────────────────────────────────────
+          Three of the four cards are billing-derived, so the grid collapses
+          to a single "Live events" card when that module is hidden. */}
+      <div className={cn("grid gap-2.5", statGridClass)}>
+        {billingEnabled ? (
+          <>
+            <StatCard
+              index={0}
+              tone="primary"
+              icon={Server}
+              label="Plan"
+              value={planValue}
+              sublabel={planSub}
+            />
+            <StatCard
+              index={1}
+              tone={status.isLoading || status.isError || !status.data ? "success" : validity.tone}
+              icon={Calendar}
+              label="Valid for"
+              value={validityValue}
+              sublabel={validitySub}
+            />
+            <StatCard
+              index={2}
+              tone="warning"
+              icon={Gauge}
+              label="Resources"
+              value={resourcesValue}
+              sublabel={resourcesSub}
+            />
+          </>
+        ) : null}
         <StatCard
           index={3}
           tone="info"
@@ -1192,7 +1239,7 @@ export function OverviewPage() {
               <span className="capitalize">{sseStatus}</span>
             </span>
           }
-          href="/activity"
+          href={activityEnabled ? "/activity" : undefined}
         />
       </div>
 
@@ -1203,13 +1250,15 @@ export function OverviewPage() {
       <div className="flex flex-col gap-4 lg:flex-row">
         {/* Left rail */}
         <aside className="w-full space-y-4 lg:w-[360px] lg:shrink-0">
-          <EntityDetailSection title="Subscription" icon={CreditCard}>
-            <SubscriptionBody
-              data={subscription.data}
-              loading={subscription.isLoading}
-              isError={subscription.isError}
-            />
-          </EntityDetailSection>
+          {billingEnabled ? (
+              <EntityDetailSection title="Subscription" icon={CreditCard}>
+                <SubscriptionBody
+                  data={subscription.data}
+                  loading={subscription.isLoading}
+                  isError={subscription.isError}
+                />
+              </EntityDetailSection>
+          ) : null}
 
           <EntityDetailSection title="System status" icon={Wifi}>
             <SystemStatusBody sseStatus={sseStatus} eventCount={eventCount} />
@@ -1218,50 +1267,54 @@ export function OverviewPage() {
 
         {/* Right column — 2-up widget grid */}
         <div className="grid w-full min-w-0 flex-1 grid-cols-1 gap-4 md:grid-cols-2">
-          <EntityDetailSection
-            title="Recent audits"
-            icon={ScrollText}
-            description="Last 24 hours, top 5 events."
-            action={
-              <Link
-                to="/system/audits"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                See all <ArrowUpRight className="size-3" />
-              </Link>
-            }
-          >
-            <RecentAuditsBody />
-          </EntityDetailSection>
+          {auditingEnabled ? (
+            <EntityDetailSection
+              title="Recent audits"
+              icon={ScrollText}
+              description="Last 24 hours, top 5 events."
+              action={
+                <Link
+                  to="/system/audits"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  See all <ArrowUpRight className="size-3" />
+                </Link>
+              }
+            >
+              <RecentAuditsBody />
+            </EntityDetailSection>
+          ) : null}
 
-          <EntityDetailSection
-            title="Usage by resource"
-            icon={Gauge}
-            description="Current-month consumption against plan limits."
-            action={
-              totalsView.overage > 0 ? <Badge variant="danger">overage</Badge> : undefined
-            }
-          >
-            {usage.isLoading ? (
-              <UsageSkeleton />
-            ) : usage.isError ? (
-              <UsageEmpty
-                title="Couldn't load usage"
-                description="The usage endpoint returned an error. Try refreshing."
-              />
-            ) : rows.length === 0 ? (
-              <UsageEmpty
-                title="No usage captured yet"
-                description="Activity will appear here as the backend records snapshots for this period."
-              />
-            ) : (
-              <ul>
-                {rows.map((row) => (
-                  <UsageRow key={row.resource} row={row} />
-                ))}
-              </ul>
-            )}
-          </EntityDetailSection>
+          {billingEnabled ? (
+            <EntityDetailSection
+              title="Usage by resource"
+              icon={Gauge}
+              description="Current-month consumption against plan limits."
+              action={
+                totalsView.overage > 0 ? <Badge variant="danger">overage</Badge> : undefined
+              }
+            >
+              {usage.isLoading ? (
+                <UsageSkeleton />
+              ) : usage.isError ? (
+                <UsageEmpty
+                  title="Couldn't load usage"
+                  description="The usage endpoint returned an error. Try refreshing."
+                />
+              ) : rows.length === 0 ? (
+                <UsageEmpty
+                  title="No usage captured yet"
+                  description="Activity will appear here as the backend records snapshots for this period."
+                />
+              ) : (
+                <ul>
+                  {rows.map((row) => (
+                    <UsageRow key={row.resource} row={row} />
+                  ))}
+                </ul>
+              )}
+            </EntityDetailSection>
+          ) : null}
 
           <EntityDetailSection
             title="Quick actions"
@@ -1271,21 +1324,23 @@ export function OverviewPage() {
             <QuickActionsBody />
           </EntityDetailSection>
 
-          <EntityDetailSection
-            title="Live feed"
-            icon={Activity}
-            description="Real-time backend events over SSE."
-            action={
-              <Link
-                to="/activity"
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Open <ArrowUpRight className="size-3" />
-              </Link>
-            }
-          >
-            <LiveFeedBody events={events} />
-          </EntityDetailSection>
+          {activityEnabled ? (
+            <EntityDetailSection
+              title="Live feed"
+              icon={Activity}
+              description="Real-time backend events over SSE."
+              action={
+                <Link
+                  to="/activity"
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Open <ArrowUpRight className="size-3" />
+                </Link>
+              }
+            >
+              <LiveFeedBody events={events} />
+            </EntityDetailSection>
+          ) : null}
         </div>
       </div>
     </div>

@@ -7,7 +7,7 @@ import { queryClient } from "@/lib/query-client";
 import { AuthProvider } from "@/auth/auth-context";
 import { RealtimeProvider } from "@/realtime/realtime-context";
 import { ThemeProvider, useTheme } from "@/components/theme/theme-provider";
-import { router } from "@/routes";
+import { getRouter } from "@/routes";
 
 export function App() {
   return (
@@ -27,7 +27,7 @@ export function App() {
                 />
               }
             >
-              <RouterProvider router={router} />
+              <RouterProvider router={getRouter()} />
             </Suspense>
           </RealtimeProvider>
           <FshToaster />

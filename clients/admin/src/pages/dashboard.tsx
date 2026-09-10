@@ -14,6 +14,55 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EntityPageHeader, Stat, StatStrip, ToneIconTile, type ToneIconTileTone } from "@/components/list";
 import { useAuth } from "@/auth/use-auth";
 import { cn } from "@/lib/cn";
+import { isModuleEnabled, type ModuleKey } from "@/lib/modules";
+
+/**
+ * Entry-point cards, as data rather than JSX so they can be filtered the same
+ * way nav items are — two of them front Billing, which a deployment may hide
+ * (see lib/modules.ts). `module` omitted means always shown.
+ */
+type Pivot = {
+  to: string;
+  icon: typeof Building2;
+  tone: ToneIconTileTone;
+  title: string;
+  description: string;
+  module?: ModuleKey;
+};
+
+const PIVOTS: Pivot[] = [
+  {
+    to: "/tenants",
+    icon: Building2,
+    tone: "info",
+    title: "Tenants",
+    description: "Provision, suspend, and inspect tenants.",
+    module: "multitenancy",
+  },
+  {
+    to: "/users",
+    icon: UsersRound,
+    tone: "primary",
+    title: "Users",
+    description: "Root-tenant operators and role management.",
+  },
+  {
+    to: "/billing/plans",
+    icon: Receipt,
+    tone: "success",
+    title: "Billing",
+    description: "Plans, subscriptions, invoices and pricing.",
+    module: "billing",
+  },
+  {
+    to: "/billing/invoices",
+    icon: FileText,
+    tone: "warning",
+    title: "Invoices",
+    description: "Cross-tenant ledger. Issue, mark paid, void.",
+    module: "billing",
+  },
+];
 
 /**
  * DashboardPage — the operator overview. EntityPageHeader greeting,
@@ -23,17 +72,27 @@ import { cn } from "@/lib/cn";
 export function DashboardPage() {
   const { user } = useAuth();
 
+  // A deployment that hides a module shouldn't pay for its data either: the
+  // tiles below are gated on the same keys, so an ungated fetch would only
+  // produce requests nothing renders (and 403s once permissions are trimmed
+  // alongside). See lib/modules.ts.
+  const tenantsEnabled = isModuleEnabled("multitenancy");
+  const billingEnabled = isModuleEnabled("billing");
+
   const tenantsQuery = useQuery({
     queryKey: ["tenants", { pageNumber: 1, pageSize: 1 }],
     queryFn: () => listTenants({ pageNumber: 1, pageSize: 1 }),
+    enabled: tenantsEnabled,
   });
   const plansQuery = useQuery({
     queryKey: ["billing", "plans", { includeInactive: true }],
     queryFn: () => getPlans(true),
+    enabled: billingEnabled,
   });
   const invoicesQuery = useQuery({
     queryKey: ["billing", "invoices", { pageNumber: 1, pageSize: 50 }],
     queryFn: () => listInvoices({ pageNumber: 1, pageSize: 50 }),
+    enabled: billingEnabled,
   });
 
   const tenantsTotal = tenantsQuery.data?.totalCount;
@@ -42,6 +101,13 @@ export function DashboardPage() {
   const invoicesPage = invoicesQuery.data;
   const outstandingCount =
     invoicesPage?.items.filter((i) => i.status === "Issued").length ?? 0;
+
+  // 1 tenants tile + 3 billing tiles; collapse the grid rather than leaving
+  // an off-balance 4-column strip when a module is hidden.
+  const statCount = (tenantsEnabled ? 1 : 0) + (billingEnabled ? 3 : 0);
+  const statCols = statCount >= 4 ? 4 : statCount === 3 ? 3 : 2;
+
+  const visiblePivots = PIVOTS.filter((p) => isModuleEnabled(p.module));
 
   const firstName = user?.name?.split(" ")[0];
 
@@ -64,56 +130,62 @@ export function DashboardPage() {
       </div>
 
       {/* ── KPI stat strip ───────────────────────────────────────────── */}
-      <StatStrip cols={4} className="fsh-enter fsh-enter-2">
-        <Stat
-          label="Tenants"
-          value={
-            tenantsQuery.isLoading ? (
-              <Skeleton className="h-7 w-16" />
-            ) : (
-              tenantsTotal?.toLocaleString() ?? "—"
-            )
-          }
-          hint="registered on this instance"
-        />
-        <Stat
-          label="Plans"
-          value={
-            plansQuery.isLoading ? (
-              <Skeleton className="h-7 w-16" />
-            ) : (
-              plans.length.toLocaleString()
-            )
-          }
-          hint={`${activePlans} active`}
-        />
-        <Stat
-          label="Invoices"
-          value={
-            invoicesQuery.isLoading ? (
-              <Skeleton className="h-7 w-16" />
-            ) : (
-              invoicesPage?.items.length.toLocaleString() ?? "—"
-            )
-          }
-          hint={
-            invoicesPage
-              ? `${invoicesPage.totalCount.toLocaleString()} total ledger`
-              : "loading…"
-          }
-        />
-        <Stat
-          label="Outstanding"
-          value={
-            invoicesQuery.isLoading ? (
-              <Skeleton className="h-7 w-16" />
-            ) : (
-              outstandingCount.toLocaleString()
-            )
-          }
-          hint="issued, awaiting payment"
-          tone={outstandingCount > 0 ? "warning" : "default"}
-        />
+      <StatStrip cols={statCols} className="fsh-enter fsh-enter-2">
+        {tenantsEnabled ? (
+          <Stat
+            label="Tenants"
+            value={
+              tenantsQuery.isLoading ? (
+                <Skeleton className="h-7 w-16" />
+              ) : (
+                tenantsTotal?.toLocaleString() ?? "—"
+              )
+            }
+            hint="registered on this instance"
+          />
+        ) : null}
+        {billingEnabled ? (
+          <>
+            <Stat
+              label="Plans"
+              value={
+                plansQuery.isLoading ? (
+                  <Skeleton className="h-7 w-16" />
+                ) : (
+                  plans.length.toLocaleString()
+                )
+              }
+              hint={`${activePlans} active`}
+            />
+            <Stat
+              label="Invoices"
+              value={
+                invoicesQuery.isLoading ? (
+                  <Skeleton className="h-7 w-16" />
+                ) : (
+                  invoicesPage?.items.length.toLocaleString() ?? "—"
+                )
+              }
+              hint={
+                invoicesPage
+                  ? `${invoicesPage.totalCount.toLocaleString()} total ledger`
+                  : "loading…"
+              }
+            />
+            <Stat
+              label="Outstanding"
+              value={
+                invoicesQuery.isLoading ? (
+                  <Skeleton className="h-7 w-16" />
+                ) : (
+                  outstandingCount.toLocaleString()
+                )
+              }
+              hint="issued, awaiting payment"
+              tone={outstandingCount > 0 ? "warning" : "default"}
+            />
+          </>
+        ) : null}
       </StatStrip>
 
       {/* ── Quick pivots ─────────────────────────────────────────────── */}
@@ -122,34 +194,9 @@ export function DashboardPage() {
           Entry points
         </p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <PivotCard
-            to="/tenants"
-            icon={Building2}
-            tone="info"
-            title="Tenants"
-            description="Provision, suspend, and inspect tenants."
-          />
-          <PivotCard
-            to="/users"
-            icon={UsersRound}
-            tone="primary"
-            title="Users"
-            description="Root-tenant operators and role management."
-          />
-          <PivotCard
-            to="/billing/plans"
-            icon={Receipt}
-            tone="success"
-            title="Billing"
-            description="Plans, subscriptions, invoices and pricing."
-          />
-          <PivotCard
-            to="/billing/invoices"
-            icon={FileText}
-            tone="warning"
-            title="Invoices"
-            description="Cross-tenant ledger. Issue, mark paid, void."
-          />
+          {visiblePivots.map((pivot) => (
+            <PivotCard key={pivot.to} {...pivot} />
+          ))}
         </div>
       </section>
     </div>

@@ -1,6 +1,8 @@
 // Runtime config — fetched once at boot from /config.json. See
 // clients/admin/src/env.ts for the rationale; the dashboard doesn't
 // need dashboardUrl (the handoff is one-way: admin → dashboard).
+import { isModuleKey, MODULE_KEYS, type ModuleKey } from "@/lib/modules";
+
 type RuntimeConfig = {
   apiBase: string;
   defaultTenant: string;
@@ -15,6 +17,8 @@ type RuntimeConfig = {
   inactivityIdleMs: number;
   /** Warning-countdown length (ms) before auto sign-out. */
   inactivityWarningMs: number;
+  /** Module keys hidden from this app's nav, routes and cross-links. */
+  disabledModules: ModuleKey[];
 };
 
 // Dashboard defaults: 20 minutes idle, then a 60-second warning.
@@ -24,6 +28,52 @@ const DEFAULT_INACTIVITY_WARNING_MS = 60_000;
 /** Accept a positive finite number from config, else fall back. */
 function positiveOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * Module keys the deployment wants hidden from this app's UI.
+ *
+ * Accepts a JSON array (`["billing","webhooks"]`) or a comma-separated string
+ * (`"billing,webhooks"`). Both forms are needed: Terraform writes config.json
+ * with `jsonencode`, so it can pass a real array, but the Docker image renders
+ * the file with `envsubst`, which can only interpolate a flat string — and the
+ * unquoted form would emit invalid JSON when the variable is unset.
+ *
+ * Absent, `""` and `[]` all mean "hide nothing". That direction matters: the
+ * failure mode worth engineering against is a config *without* the key quietly
+ * hiding a module in production, so anything unrecognised widens visibility
+ * rather than narrowing it. Unknown keys are dropped with a dev-only warning —
+ * a typo must not break the boot in production, nor pass unnoticed in dev.
+ */
+function moduleKeysOr(value: unknown, fallback: ModuleKey[]): ModuleKey[] {
+  const raw: unknown[] = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  if (raw.length === 0) return fallback;
+
+  const keys: ModuleKey[] = [];
+  const unknown: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const key = entry.trim().toLowerCase();
+    if (key === "") continue;
+    if (isModuleKey(key)) {
+      if (!keys.includes(key)) keys.push(key);
+    } else {
+      unknown.push(key);
+    }
+  }
+
+  if (unknown.length > 0 && import.meta.env.DEV) {
+    console.warn(
+      "[env] Ignoring unknown disabledModules keys: %s. Valid keys: %s",
+      unknown.join(", "),
+      MODULE_KEYS.join(", "),
+    );
+  }
+  return keys;
 }
 
 let cached: RuntimeConfig | null = null;
@@ -41,6 +91,7 @@ export async function loadRuntimeConfig(): Promise<void> {
     demoMode: cfg.demoMode ?? false,
     inactivityIdleMs: positiveOr(cfg.inactivityIdleMs, DEFAULT_INACTIVITY_IDLE_MS),
     inactivityWarningMs: positiveOr(cfg.inactivityWarningMs, DEFAULT_INACTIVITY_WARNING_MS),
+    disabledModules: moduleKeysOr(cfg.disabledModules, []),
   };
 }
 
@@ -59,4 +110,5 @@ export const env = {
   get demoMode(): boolean { return get().demoMode; },
   get inactivityIdleMs(): number { return get().inactivityIdleMs; },
   get inactivityWarningMs(): number { return get().inactivityWarningMs; },
+  get disabledModules(): ModuleKey[] { return get().disabledModules; },
 };

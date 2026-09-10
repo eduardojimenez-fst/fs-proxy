@@ -3,5 +3,12 @@
   "defaultTenant": "root",
   "dashboardUrl": "http://localhost:5174",
   "inactivityIdleMs": 600000,
-  "inactivityWarningMs": 60000
+  "inactivityWarningMs": 60000,
+  "disabledModules": [
+    "billing",
+    "webhooks",
+    "health",
+    "auditing",
+    "multitenancy"
+  ]
 }
