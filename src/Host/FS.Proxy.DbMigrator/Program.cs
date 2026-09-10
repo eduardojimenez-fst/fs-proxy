@@ -204,11 +204,13 @@ if (DataProtectionStores.UsesDatabase(builder.Configuration[DataProtectionStores
     using var bootstrapLoggerFactory = LoggerFactory.Create(b => b.AddConsole());
     var bootstrapLogger = bootstrapLoggerFactory.CreateLogger("DataProtectionSchema");
 
-    var bootstrapProvider = builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.PostgreSQL;
+    var bootstrapProvider = builder.Configuration["DatabaseOptions:Provider"] ?? DbProviders.MSSQL;
     var bootstrapConnectionString = builder.Configuration["DatabaseOptions:ConnectionString"]
         ?? throw new InvalidOperationException("DatabaseOptions:ConnectionString is not configured.");
 
-    await MigratorLockFactory.Create(bootstrapProvider)
+    var bootstrapLock = MigratorLockFactory.Create(bootstrapProvider);
+
+    await bootstrapLock
         .WaitForDatabaseAsync(bootstrapConnectionString, bootstrapLogger, CancellationToken.None)
         .ConfigureAwait(false);
 
@@ -218,6 +220,13 @@ if (DataProtectionStores.UsesDatabase(builder.Configuration[DataProtectionStores
         builder.Configuration["DatabaseOptions:MigrationsAssembly"]
             ?? throw new InvalidOperationException("DatabaseOptions:MigrationsAssembly is not configured."),
         builder.Environment.IsDevelopment()).ConfigureAwait(false);
+
+    // EnsureAsync just created the database if this is a cold start, and the failed logins from
+    // before it existed are still cached in the connection pool. Drop them, or Step 0/1 below
+    // inherit that stale "database does not exist" answer and the tenant-catalog migrate issues a
+    // second CREATE DATABASE, which fails with "Database ... already exists" and takes the whole
+    // first run down. See IMigratorLock.ResetPooledConnections.
+    bootstrapLock.ResetPooledConnections();
 }
 
 using var host = builder.Build();
