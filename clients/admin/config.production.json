@@ -3,5 +3,12 @@
   "defaultTenant": "root",
   "dashboardUrl": "https://proxy.falcontenders.com",
   "inactivityIdleMs": 600000,
-  "inactivityWarningMs": 60000
+  "inactivityWarningMs": 60000,
+  "disabledModules": [
+    "billing",
+    "webhooks",
+    "health",
+    "auditing",
+    "multitenancy"
+  ]
 }
