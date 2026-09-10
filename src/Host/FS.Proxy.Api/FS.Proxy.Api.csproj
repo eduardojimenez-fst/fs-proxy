@@ -19,6 +19,11 @@
 			<PrivateAssets>all</PrivateAssets>
 			<IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
 		</PackageReference>
+		<!-- The rolling-file sink referenced by appsettings.Production.json's Serilog:Using. It also
+		     arrives transitively via Serilog.AspNetCore, but Serilog.Settings.Configuration resolves
+		     sinks by assembly name at runtime and silently skips one it cannot load — so the
+		     dependency this host's logging config depends on is declared here explicitly. -->
+		<PackageReference Include="Serilog.Sinks.File" />
 		<PackageReference Include="Mediator.Abstractions" />
 		<PackageReference Include="Mediator.SourceGenerator">
 			<PrivateAssets>all</PrivateAssets>

@@ -59,6 +59,11 @@
   <ItemGroup>
     <None Include="..\FS.Proxy.Api\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\FS.Proxy.Api\appsettings.Development.json" Link="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Without this link, running the migrator with DOTNET_ENVIRONMENT=Production silently falls
+         back to the base appsettings.json — i.e. the localhost dev connection string — and migrates
+         the wrong database. It also supplies Seed:DefaultAdminPassword, which IdentityDbInitializer
+         throws without rather than seeding a predictable secret. -->
+    <None Include="..\FS.Proxy.Api\appsettings.Production.json" Link="appsettings.Production.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

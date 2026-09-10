@@ -1,0 +1,7 @@
+{
+  "apiBase": "https://proxy-api.falcontenders.com",
+  "defaultTenant": "root",
+  "dashboardUrl": "https://proxy.falcontenders.com",
+  "inactivityIdleMs": 600000,
+  "inactivityWarningMs": 60000
+}

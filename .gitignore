@@ -199,6 +199,13 @@ publish/
 *.pubxml
 *.publishproj
 
+# ...except the two IIS publish profiles this project actually deploys with. They hold hostnames,
+# app-pool names and FTP paths — the operational contract for the deploy — while the passwords stay
+# in the sibling *.pubxml.user files, which remain ignored. Without these negations the profiles
+# vanish on a fresh clone.
+!src/Host/FS.Proxy.Api/Properties/PublishProfiles/IIS-Prod.pubxml
+!deploy/iis/FS.Proxy.Admin.Web/Properties/PublishProfiles/*.pubxml
+
 # Microsoft Azure Web App publish settings. Comment the next line if you want to
 # checkin your Azure Web App publish settings, but sensitive information contained
 # in these scripts will be unencrypted

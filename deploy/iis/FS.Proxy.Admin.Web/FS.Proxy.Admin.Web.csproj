@@ -1,0 +1,83 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Deploy shim for clients/admin.
+
+    Why this exists: FTP is a Visual Studio web-publish method, not a .NET SDK one — there is no FTP
+    target anywhere in Microsoft.NET.Sdk.Publish. So publishing the Vite build over FTP needs a
+    *project* Visual Studio can right-click → Publish, and a React app does not have one. This
+    project contributes no code of its own; its entire job is to produce a publish directory that is
+    a byte-for-byte copy of clients/admin/dist, with config.json swapped for the production one.
+
+    It deliberately lives outside src/ so that src/Directory.Build.props (TreatWarningsAsErrors,
+    AnalysisMode=AllEnabledByDefault, GenerateDocumentationFile) does not apply to it, and so that
+    Backend CI's src/** path filter does not pick it up.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Sdk.Web defaults to Exe, which fails with CS5001 (no entry point) since there are no
+         sources. Nothing is compiled or deployed either way. -->
+    <OutputType>Library</OutputType>
+    <RootNamespace>FS.Proxy.Admin.Web</RootNamespace>
+    <AssemblyName>FS.Proxy.Admin.Web</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>true</IsPublishable>
+
+    <!-- No sources, and nothing the compiler produces should reach the server: the site is static
+         files served by IIS, not an ASP.NET Core app. Without these the publish directory would get
+         a stray dll, deps.json and runtimeconfig.json. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <CopyBuildOutputToPublishDirectory>false</CopyBuildOutputToPublishDirectory>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Otherwise the Web SDK emits FS.Proxy.Admin.Web.staticwebassets.endpoints.json into the
+         publish root. Nothing serves it here — IIS just hands out the files on disk. -->
+    <StaticWebAssetsEnabled>false</StaticWebAssetsEnabled>
+
+    <!-- The site ships clients/admin/public/web.config (rewrite rules, MIME types, cache policy).
+         Letting the Web SDK generate its own would overwrite it with an AspNetCoreModule handler
+         pointing at a dll that is not deployed. -->
+    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>
+
+    <!-- CS2008: no source files. Expected — see above. -->
+    <NoWarn>$(NoWarn);CS2008</NoWarn>
+
+    <AdminClientDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../clients/admin'))</AdminClientDir>
+  </PropertyGroup>
+
+  <!-- Build the SPA. Hooked to publish only: a plain `dotnet build` of this project stays a no-op so
+       it costs nothing if the project is ever added to a solution that CI builds. -->
+  <Target Name="BuildAdminClient">
+    <Message Importance="high" Text="Building admin SPA in $(AdminClientDir)" />
+    <Exec Command="npm ci" WorkingDirectory="$(AdminClientDir)" Condition="!Exists('$(AdminClientDir)/node_modules')" />
+    <Exec Command="npm run build" WorkingDirectory="$(AdminClientDir)" />
+
+    <Error Condition="!Exists('$(AdminClientDir)/dist/index.html')"
+           Text="Admin SPA build produced no dist/index.html in $(AdminClientDir)." />
+    <Error Condition="!Exists('$(AdminClientDir)/config.production.json')"
+           Text="Missing $(AdminClientDir)/config.production.json — the runtime config the SPA fetches at boot." />
+
+    <!-- public/config.json holds the dev values (empty apiBase, so Vite's proxy handles /api).
+         Overwrite it in the build output with the production one. -->
+    <Copy SourceFiles="$(AdminClientDir)/config.production.json"
+          DestinationFiles="$(AdminClientDir)/dist/config.json" />
+  </Target>
+
+  <!-- Contribute dist/** as the publish payload. AfterTargets="ComputeFilesToPublish" is the
+       extension point the ASP.NET Core SPA templates use; CopyFilesToPublishDirectory runs after it,
+       and the FTP/FileSystem publish transports then ship whatever landed there. -->
+  <Target Name="CollectAdminDist" AfterTargets="ComputeFilesToPublish" DependsOnTargets="BuildAdminClient">
+    <ItemGroup>
+      <_AdminDistFiles Include="$(AdminClientDir)/dist/**/*" />
+      <ResolvedFileToPublish Include="@(_AdminDistFiles->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+    <Message Importance="high" Text="Publishing @(_AdminDistFiles->Count()) file(s) from the admin SPA build." />
+  </Target>
+
+</Project>
