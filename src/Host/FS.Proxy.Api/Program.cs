@@ -27,13 +27,21 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-if (builder.Environment.IsProduction())
+// Fail fast on the settings that have no safe default, in every deployed environment — not just
+// Production. QA and any future Staging/UAT need the same gate: options ValidateOnStart runs at host
+// start, which is AFTER the middleware pipeline is built, and Hangfire opens its SQL connection while
+// that pipeline is being configured. So without this block a deployed environment reports a missing
+// connection string as a connection-pool timeout from deep inside Hangfire. CachingOptions:Redis is
+// the worst case: nothing validates it at all, and an empty value silently downgrades the app to an
+// in-memory cache with no SignalR backplane — an environment that looks healthy but is not.
+if (!builder.Environment.IsDevelopment())
 {
-    static void Require(IConfiguration config, string key)
+    void Require(IConfiguration config, string key)
     {
         if (string.IsNullOrWhiteSpace(config[key]))
         {
-            throw new InvalidOperationException($"Missing required configuration '{key}' in Production.");
+            throw new InvalidOperationException(
+                $"Missing required configuration '{key}' in {builder.Environment.EnvironmentName}.");
         }
     }
 

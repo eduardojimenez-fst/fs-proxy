@@ -51,18 +51,22 @@
   <!-- Build the SPA. Hooked to publish only: a plain `dotnet build` of this project stays a no-op so
        it costs nothing if the project is ever added to a solution that CI builds. -->
   <Target Name="BuildAdminClient">
-    <Message Importance="high" Text="Building admin SPA in $(AdminClientDir)" />
+    <!-- Deliberately no default: defaulting to config.production.json would mean a new publish profile
+         that forgets to set this silently ships production's API URL. Fail closed instead. -->
+    <Error Condition="'$(AdminRuntimeConfig)' == ''"
+           Text="AdminRuntimeConfig is not set. Publish through a profile (IIS-Prod, IIS-QA, Folder-Test) or pass -p:AdminRuntimeConfig=config.&lt;env&gt;.json." />
+    <Message Importance="high" Text="Building admin SPA in $(AdminClientDir) with runtime config $(AdminRuntimeConfig)" />
     <Exec Command="npm ci" WorkingDirectory="$(AdminClientDir)" Condition="!Exists('$(AdminClientDir)/node_modules')" />
     <Exec Command="npm run build" WorkingDirectory="$(AdminClientDir)" />
 
     <Error Condition="!Exists('$(AdminClientDir)/dist/index.html')"
            Text="Admin SPA build produced no dist/index.html in $(AdminClientDir)." />
-    <Error Condition="!Exists('$(AdminClientDir)/config.production.json')"
-           Text="Missing $(AdminClientDir)/config.production.json — the runtime config the SPA fetches at boot." />
+    <Error Condition="!Exists('$(AdminClientDir)/$(AdminRuntimeConfig)')"
+           Text="Missing $(AdminClientDir)/$(AdminRuntimeConfig) — the runtime config the SPA fetches at boot." />
 
     <!-- public/config.json holds the dev values (empty apiBase, so Vite's proxy handles /api).
-         Overwrite it in the build output with the production one. -->
-    <Copy SourceFiles="$(AdminClientDir)/config.production.json"
+         Overwrite it in the build output with the target environment's. -->
+    <Copy SourceFiles="$(AdminClientDir)/$(AdminRuntimeConfig)"
           DestinationFiles="$(AdminClientDir)/dist/config.json" />
   </Target>
 

@@ -58,4 +58,12 @@
     <Folder Include="wwwroot\uploads\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- web.<EnvironmentName>.config files are XDT transforms consumed at publish time, not runtime
+         content. Sdk.Web's default content glob (**/*.config) would otherwise ship them to every
+         server. The pattern does not match web.config itself. -->
+    <Content Remove="web.*.config" />
+    <None Include="web.*.config" />
+  </ItemGroup>
+
 </Project>

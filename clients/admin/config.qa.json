@@ -1,0 +1,14 @@
+{
+  "apiBase": "https://proxy-api-qa.falcontenders.com",
+  "defaultTenant": "root",
+  "dashboardUrl": "https://proxy-qa.falcontenders.com",
+  "inactivityIdleMs": 600000,
+  "inactivityWarningMs": 60000,
+  "disabledModules": [
+    "billing",
+    "webhooks",
+    "health",
+    "auditing",
+    "multitenancy"
+  ]
+}

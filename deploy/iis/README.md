@@ -1,71 +1,114 @@
 # IIS deployment — FS.Proxy
 
-Two IIS sites on `fsapp1server.southcentralus.cloudapp.azure.com`:
+Two environments, one IIS site pair each.
 
-| App | Hostname | IIS app / pool | Publish method | Profile |
-|---|---|---|---|---|
-| `FS.Proxy.Api` | `https://proxy-api.falcontenders.com` | `FS.Proxy.Api` | MSDeploy (WMSVC) | `src/Host/FS.Proxy.Api/Properties/PublishProfiles/IIS-Prod.pubxml` |
-| `clients/admin` | `https://proxy.falcontenders.com` | `FS.Proxy` | FTP over explicit TLS | `deploy/iis/FS.Proxy.Admin.Web/Properties/PublishProfiles/IIS-Prod.pubxml` |
+| Env | App | Hostname | IIS app / pool | Server | Publish profile |
+|---|---|---|---|---|---|
+| Production | `FS.Proxy.Api` | `https://proxy-api.falcontenders.com` | `FS.Proxy.Api` | `fsapp1server` | `src/Host/FS.Proxy.Api/…/IIS-Prod.pubxml` |
+| Production | `clients/admin` | `https://proxy.falcontenders.com` | `FS.Proxy` | `fsapp1server` | `deploy/iis/FS.Proxy.Admin.Web/…/IIS-Prod.pubxml` |
+| QA | `FS.Proxy.Api` | `https://proxy-api-qa.falcontenders.com` | `FS.Proxy.Api` | `fsqa1server` | `src/Host/FS.Proxy.Api/…/IIS-QA.pubxml` |
+| QA | `clients/admin` | `https://proxy-qa.falcontenders.com` | `FS.Proxy` | `fsqa1server` | `deploy/iis/FS.Proxy.Admin.Web/…/IIS-QA.pubxml` |
 
-`clients/dashboard` is **not** deployed. See [Known gaps](#known-gaps).
+Full server names are `<host>.southcentralus.cloudapp.azure.com`.
+`clients/dashboard` is **not** deployed in either environment. See [Known gaps](#known-gaps).
 
-> **Both publish profiles require Visual Studio on Windows.** MSDeploy needs `msdeploy.exe`, and FTP
+> **Every publish profile requires Visual Studio on Windows.** MSDeploy needs `msdeploy.exe`, and FTP
 > is a Visual Studio web-publish method that the .NET SDK does not implement at all — there is no FTP
-> target in `Microsoft.NET.Sdk.Publish`. `dotnet publish -p:PublishProfile=IIS-Prod` will not deploy
+> target in `Microsoft.NET.Sdk.Publish`. `dotnet publish -p:PublishProfile=IIS-QA` will not deploy
 > either app. From macOS/Linux, use `Folder-Test` (below) to verify the payload, then publish from VS.
+
+## What differs between QA and Production
+
+QA is meant to behave like Production, so everything that differs does so deliberately:
+
+| | Production | QA |
+|---|---|---|
+| Environment name | `Production` | `QA` |
+| Config file | `appsettings.Production.json` | `appsettings.QA.json` |
+| SQL Server | `fsdb1server…azure.local` | `fsqa1server…azure.local` |
+| Redis | `10.0.1.4:6379` (db 0) | `10.0.1.4:6379`, `defaultDatabase=1` |
+| OTLP `service.name` | `FS.Proxy.Api` | `FS.Proxy-QA.Api` (via `web.QA.config`) |
+| JWT key / issuer / audience | distinct | distinct |
+| SPA runtime config | `clients/admin/config.production.json` | `clients/admin/config.qa.json` |
+
+Rate limiting, storage provider, `disabledModules`, Scalar and the Serilog sinks are identical on
+purpose — a limit or a hidden module that would bite a real user should bite in QA first.
+
+Two isolation details worth knowing:
+
+- **Redis is one instance shared by both environments, separated only by database index.** Without
+  `defaultDatabase=1` they would share cache keys (tenant ids collide — both have `root`) and the
+  same SignalR backplane, so a QA cache invalidation or realtime message could reach production
+  clients. Data Protection is already isolated because `DataProtection:Store=Database` and the two
+  databases are separate.
+- **Each publish ships only its own `appsettings`.** Every `appsettings.*.json` lands in the build
+  output, so each profile's `ExcludeFilesFromDeployment` drops the other environment's file (plus
+  `appsettings.Development.json`). Otherwise the QA box would hold the production database, Redis and
+  Hangfire credentials on disk, and vice versa.
 
 ## Server prerequisites
 
-Verify these **before** the first publish — most of them fail in ways that are hard to read after the fact.
+Verify these **before** the first publish on each server — most fail in ways that are hard to read
+after the fact.
 
 1. **SQL Server 2025 (17.x) or Azure SQL.** The migrations use the native `json` column type; an
-   earlier engine cannot apply them. Check with `SELECT @@VERSION` against
-   `fsdb1server.southcentralus.cloudapp.azure.local`.
+   earlier engine cannot apply them. Check with `SELECT @@VERSION` against `fsdb1server` /
+   `fsqa1server`.
 2. **Network reachability** from the app server:
-   - `fsdb1server.southcentralus.cloudapp.azure.local:1433` (SQL — internal VNet DNS)
-   - `10.0.1.4:6379` (Redis) — **required in Production**: `Program.cs` fails fast without it
-   - `10.0.1.4:4317` (OTLP collector, gRPC)
+   - the environment's SQL host on `1433` (internal VNet DNS — does not resolve from a dev machine)
+   - `10.0.1.4:6379` (Redis) — **required in every deployed environment**: `Program.cs` fails fast
+     without it, because nothing else validates it and an empty value silently downgrades the app to
+     an in-memory cache with no SignalR backplane
+   - `10.0.1.4:4317` (OTLP collector, gRPC) — shared by both environments
 3. **IIS features and modules**
    - .NET 10 **Hosting Bundle** (installs `AspNetCoreModuleV2`) — the API is hosted in-process
    - **URL Rewrite Module 2.1** — the admin site's `web.config` uses a `<rewrite>` section, and IIS
      answers the whole site with a 500.19 if the module is missing
    - **WebSocket Protocol** feature — SignalR at `/api/v1/realtime/hub` falls back to long polling
      without it
-   - App pool `FS.Proxy.Api`: .NET CLR version **"No Managed Code"**
-   - App pool `FS.Proxy`: static site, also "No Managed Code"
+   - App pools `FS.Proxy.Api` and `FS.Proxy`: .NET CLR version **"No Managed Code"**
 4. **Filesystem permissions** — the API app pool identity needs *write* access under the site's
    physical path for:
    - `Logs\` — **create this directory by hand.** Serilog creates its own log files, but ANCM does
      *not* create the directory for `stdoutLogFile`, and silently writes nothing if it is absent.
    - `wwwroot\uploads\` — the local storage provider writes uploads here.
-5. **DNS + TLS certificates** bound for `proxy-api.falcontenders.com` and `proxy.falcontenders.com`.
+5. **DNS + TLS certificates** bound for all four hostnames.
 
 ## Publish the API
 
-From Visual Studio: right-click `FS.Proxy.Api` → Publish → `IIS-Prod`.
+From Visual Studio: right-click `FS.Proxy.Api` → Publish → `IIS-Prod` or `IIS-QA`.
 
-The profile sets `EnvironmentName=Production` (so ANCM gets `ASPNETCORE_ENVIRONMENT=Production`),
-`SkipExtraFilesOnServer=true` (so `Logs\` and `wwwroot\uploads\` survive a deploy) and excludes
-`appsettings.Development.json` from the payload.
+Each profile sets `<EnvironmentName>`, which the SDK writes into the generated `web.config` as
+`ASPNETCORE_ENVIRONMENT` — that is what selects `appsettings.Production.json` vs
+`appsettings.QA.json`. The committed `web.config` also names `Production`, but the publish transform
+overwrites it, so the profile always wins. Both profiles set `SkipExtraFilesOnServer=true` so `Logs\`
+and `wwwroot\uploads\` survive a deploy.
 
-Post-publish checks:
+Post-publish checks (substitute the QA hostnames as appropriate):
 
 - `https://proxy-api.falcontenders.com/health/ready` — SQL Server and Redis both healthy
-- `https://proxy-api.falcontenders.com/scalar` — API docs (the profile opens this automatically)
+- `https://proxy-api.falcontenders.com/scalar` — API docs (the profile opens this automatically).
+  QA's title reads "FS Proxy API (QA)", which is a quick way to confirm the right config loaded.
 - `Logs\log-<date>.txt` exists on the server
-- Traces, metrics and logs arrive at the collector under `service.name=FS.Proxy.Api`, **once** each
+- Traces, metrics and logs arrive at the collector under `service.name=FS.Proxy.Api` (or
+  `FS.Proxy-QA.Api`), **once** each
 
-If the site returns a **500.30**, read `Logs\stdout_*.log`: that is almost always an options
-validation failure (a missing or too-short `JwtOptions:SigningKey`, an empty Hangfire credential, an
-unreachable database) and the stdout log is the only place the message appears.
+If the site returns a **500.30**, read `Logs\stdout_*.log`. That is almost always a configuration
+failure, and the stdout log is the only place the message appears. A missing connection string, Redis
+or JWT signing key gives you `Missing required configuration '<key>' in <environment>.`
 
 ## Publish the admin SPA
 
-From Visual Studio: right-click `FS.Proxy.Admin.Web` → Publish → `IIS-Prod`.
+From Visual Studio: right-click `FS.Proxy.Admin.Web` → Publish → `IIS-Prod` or `IIS-QA`.
 
-`FS.Proxy.Admin.Web` is a shim project — it contains no code. On publish it runs `npm run build` in
-`clients/admin`, copies `clients/admin/config.production.json` over `dist/config.json`, and hands the
-resulting static files to the FTP transport. **`npm` must be on `PATH`** for whoever runs the publish.
+`FS.Proxy.Admin.Web` is a shim project — it contains no code. Its only job is to give Visual Studio
+something FTP-publishable: on publish it runs `npm run build` in `clients/admin`, copies the profile's
+`AdminRuntimeConfig` over `dist/config.json`, and hands the resulting static files to the FTP
+transport. **`npm` must be on `PATH`** for whoever runs the publish.
+
+`AdminRuntimeConfig` is the one property that must differ between the profiles, and getting it wrong
+is silent — the SPA would come up on the QA host talking to production. There is deliberately **no
+default**: a profile that does not set it fails the build rather than guessing an environment.
 
 `DeleteExistingFiles` is `false` on purpose: Vite fingerprints every asset, so leaving the previous
 build's chunks in place is what lets an in-flight session finish instead of 404ing on a chunk that
@@ -74,16 +117,23 @@ just disappeared.
 Verify the payload first (works on any platform, no FTP involved):
 
 ```bash
+# Production payload
 dotnet publish deploy/iis/FS.Proxy.Admin.Web -p:PublishProfile=Folder-Test
+
+# QA payload
+dotnet publish deploy/iis/FS.Proxy.Admin.Web -p:PublishProfile=Folder-Test \
+  -p:AdminRuntimeConfig=config.qa.json
+
 ls deploy/iis/FS.Proxy.Admin.Web/bin/Release/publish-test
 ```
 
-That directory must hold `index.html`, `assets/`, `web.config` and a `config.json` whose `apiBase` is
-`https://proxy-api.falcontenders.com` — and no `.dll`, `.deps.json` or `.runtimeconfig.json`.
+That directory must hold `index.html`, `assets/`, `web.config` and a `config.json` whose `apiBase`
+matches the environment you asked for — and no `.dll`, `.deps.json` or `.runtimeconfig.json`.
 
 Post-publish checks in the browser:
 
-- `/config.json` responds with the production `apiBase` (and `Cache-Control: no-cache`)
+- `/config.json` responds with the expected `apiBase` (and `Cache-Control: no-cache`) — **check this
+  first**, it is the one mistake that makes a QA site quietly drive production
 - Sign in — this is what exercises CORS end to end, including the `tenant` request header
 - Open a deep link such as `/tenants/root` and reload — validates the SPA rewrite rule
 - The realtime indicator connects — validates the SignalR negotiate headers in the CORS allow-list
@@ -99,34 +149,43 @@ turn that requirement off on the FTP site, or upload
 ## Migrate the database
 
 The database is **not** migrated when the API starts — it is a separate step, and it has to run from
-inside the VNet, because `fsdb1server...azure.local` is internal DNS that does not resolve from a dev
-machine.
+inside the VNet, because both SQL hosts are internal DNS that does not resolve from a dev machine.
 
 ```bash
-# On a machine that can build (publishes framework-dependent; needs the .NET 10 runtime on the target)
+# On a machine that can build (framework-dependent; needs the .NET 10 runtime on the target)
 dotnet publish src/Host/FS.Proxy.DbMigrator -c Release -r win-x64 --self-contained false
 ```
 
-Copy the output to the app server, then:
+Copy the output to the target app server, then:
 
 ```powershell
-$env:DOTNET_ENVIRONMENT = "Production"
-.\FS.Proxy.DbMigrator.exe list-pending     # inspect first
-.\FS.Proxy.DbMigrator.exe apply --seed     # apply + seed the root tenant admin
+$env:DOTNET_ENVIRONMENT = "QA"          # or "Production"
+.\FS.Proxy.DbMigrator.exe list-pending  # inspect first
+.\FS.Proxy.DbMigrator.exe apply --seed  # apply + seed the root tenant admin
 ```
 
-`FS.Proxy.DbMigrator.csproj` links the API's `appsettings.Production.json`, so the migrator reads the
-same connection string and the same `Seed:DefaultAdminPassword` the API is configured with. Without
-that link it would silently fall back to the base `appsettings.json` — the localhost dev connection
-string — and migrate the wrong database.
+`FS.Proxy.DbMigrator.csproj` links the API's `appsettings.Production.json` **and**
+`appsettings.QA.json`, so the migrator reads the same connection string and
+`Seed:DefaultAdminPassword` the API is configured with. Without those links it would silently fall
+back to the base `appsettings.json` — the localhost dev connection string — and migrate the wrong
+database.
+
+The trade-off is that the migrator's publish output carries **both** environment files, so unlike the
+API publish it has no per-profile exclusion. Drop the one you are not deploying before copying it to
+a server, so a QA box never holds production credentials:
+
+```powershell
+# from the publish output, before copying to the QA server
+Remove-Item .\appsettings.Production.json, .\appsettings.Development.json
+```
 
 ## Configuration notes
 
-Everything lives in `src/Host/FS.Proxy.Api/appsettings.Production.json`, secrets included. A few
-things there are load-bearing and easy to break:
+Secrets live in the per-environment `appsettings.<Env>.json`, committed. A few things are
+load-bearing and easy to break:
 
-- **Configuration arrays merge by index, they do not replace.** `AllowedOrigins: ["https://a"]` in
-  Production does not remove a second origin declared in the base `appsettings.json` — it only
+- **Configuration arrays merge by index, they do not replace.** `AllowedOrigins: ["https://a"]` in an
+  environment file does not remove a second origin declared in the base `appsettings.json` — it only
   overwrites index 0. That is why the base file keeps `CorsOptions.AllowedOrigins` empty, with the dev
   origins in `appsettings.Development.json`.
 - **`CorsOptions.AllowedHeaders` must cover what the clients actually send**: `tenant` (every
@@ -135,27 +194,38 @@ things there are load-bearing and easy to break:
   at the endpoint.
 - **Origins are compared as exact scheme+host+port strings.** A trailing slash never matches.
 - **`HangfireOptions.UserName`/`Password` are `[Required]` with `ValidateOnStart`** (password ≥ 12
-  chars). They are not part of the explicit fail-fast list in `Program.cs`, so leaving them blank
-  shows up as an opaque startup crash rather than a helpful message.
+  chars). They are *not* in the explicit fail-fast list in `Program.cs`, so leaving them blank shows
+  up as an opaque startup crash rather than a helpful message.
+- **Options `ValidateOnStart` runs later than you would expect** — at host start, i.e. *after* the
+  middleware pipeline is built. Hangfire opens its SQL connection while that pipeline is being
+  configured, so a bad connection string surfaces as a connection-pool timeout from inside Hangfire
+  rather than as a validation error. That is why `Program.cs` has an explicit fail-fast block for the
+  three settings with no safe default, and why it covers every non-Development environment.
 - **The OTLP log sink is added in code**, not declared in `Serilog:WriteTo`, whenever
   `OpenTelemetryOptions:Exporter:Otlp:Enabled` is true with an endpoint. Declaring it in the Serilog
   section as well ships every log record twice.
-- **Hangfire stores jobs in SQL Server**, on the same connection string as EF Core. Redis is the
-  distributed cache and the SignalR backplane only.
+- **OTLP `service.name` comes from `OTEL_SERVICE_NAME`, falling back to the assembly name** — which
+  is `FS.Proxy.Api` in every environment. `src/Host/FS.Proxy.Api/web.QA.config` is an XDT transform
+  (the SDK applies `web.<EnvironmentName>.config` automatically) that sets `OTEL_SERVICE_NAME` so QA
+  and Production do not collapse into one resource in the shared collector. It is excluded from the
+  publish payload by the csproj.
+- **Hangfire stores jobs in SQL Server**, on the same connection string as EF Core — so the queue is
+  isolated per environment. Redis is the distributed cache and the SignalR backplane only.
 - **Data Protection keys go to the database** (`DataProtection:Store=Database`), so the API and the
-  DbMigrator do not need to share a Redis instance.
+  DbMigrator do not need to share a Redis instance, and QA/Production keys never mix.
 
 ## Known gaps
 
-Carried over deliberately — none of these block the deploy, but they are all live limitations.
+Carried over deliberately — none of these block a deploy, but they are all live limitations, and
+they apply to both environments unless noted.
 
 - **No SMTP credentials.** `MailOptions.SMTP` is blank, so forgot-password, tenant invitations and
   email notifications do not send. When configuring it, note that the reset link is built as
   `{OriginOptions.OriginUrl}/reset-password`, and `OriginUrl` points at the API host (it also
   absolutizes profile-image URLs served from `wwwroot`). Pointing it at the SPA fixes the email link
   and breaks the images; the alternative is an IIS rewrite on the API for `/reset-password`.
-- **The dashboard is not deployed.** `clients/admin`'s `dashboardUrl` is a placeholder, so the
-  operator → tenant impersonation handoff has nowhere to land.
+- **The dashboard is not deployed.** `clients/admin`'s `dashboardUrl` is a placeholder in both
+  environments, so the operator → tenant impersonation handoff has nowhere to land.
 - **The Hangfire dashboard at `/jobs` is internet-reachable**, mounted ahead of the authentication
   pipeline and protected only by its basic-auth credentials. Restrict it with IIS "IP and Domain
   Restrictions" if that is not acceptable.
@@ -171,3 +241,5 @@ Carried over deliberately — none of these block the deploy, but they are all l
   load balancer in front without wiring forwarded headers will cause redirect loops.
 - **Uploads live under the site directory** (`wwwroot\uploads`). They survive publishes thanks to
   `SkipExtraFilesOnServer=true`, but moving `Storage:Provider` to `s3`/MinIO is the durable answer.
+- **QA and Production share one Redis instance and one OTLP collector.** Separated by database index
+  and `service.name` respectively, which is a convention, not an enforced boundary.
