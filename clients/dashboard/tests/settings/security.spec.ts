@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { mockJsonResponse, mockProblemDetails } from "../helpers/api-mocks";
+import { mockRuntimeConfig } from "../helpers/shell-mocks";
 import { seedAuthedSession, TEST_USER } from "../helpers/auth-seed";
 
 function profile2fa(enabled: boolean) {
@@ -17,6 +18,10 @@ function profile2fa(enabled: boolean) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // Hermetic runtime config: this spec hand-rolls its mocks instead of using
+  // installShellMocks, so it stubs /config.json itself — otherwise a project
+  // that hides modules in public/config.json breaks it.
+  await mockRuntimeConfig(page);
   await seedAuthedSession(page, TEST_USER);
   // Sessions endpoint isn't the focus here — return an empty list so
   // the SessionsCard renders its empty state without 401-ing.

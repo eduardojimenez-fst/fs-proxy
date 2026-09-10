@@ -38,6 +38,7 @@ import { useAuth } from "@/auth/use-auth";
 import { useTheme } from "@/components/theme/theme-provider";
 import { accents } from "@/components/theme/appearance-options";
 import { ALL_TRASH_PERMISSIONS } from "@/lib/trash-permissions";
+import { areAnyModulesEnabled, isModuleEnabled, type ModuleKey } from "@/lib/modules";
 import { cn } from "@/lib/cn";
 
 /**
@@ -65,6 +66,14 @@ type ActionItem = {
    */
   perm?: string;
   anyPerm?: readonly string[];
+  /**
+   * Module gates — same semantics as NavSpec: hidden when the deployment
+   * disabled `module`, or disabled every one of `anyModule`. Keep these in sync
+   * with layout/nav-data.ts; this palette duplicates the nav graph, so an item
+   * missing its key would keep offering a route that no longer exists.
+   */
+  module?: ModuleKey;
+  anyModule?: readonly ModuleKey[];
 };
 
 type ActionGroup = {
@@ -95,6 +104,8 @@ export function CommandPaletteDialog({
     };
     // Mirrors isNavItemVisible in layout/nav-data.ts.
     const visible = (item: ActionItem) => {
+      if (!isModuleEnabled(item.module)) return false;
+      if (!areAnyModulesEnabled(item.anyModule)) return false;
       if (item.perm && !permissions.includes(item.perm)) return false;
       if (item.anyPerm && !item.anyPerm.some((p) => permissions.includes(p))) return false;
       return true;
@@ -118,6 +129,7 @@ export function CommandPaletteDialog({
             Icon: Activity,
             keywords: ["events", "sse", "log"],
             perform: go("/activity"),
+            module: "activity",
           },
           {
             id: "nav-chat",
@@ -127,6 +139,7 @@ export function CommandPaletteDialog({
             keywords: ["messages", "dm", "channel", "conversation"],
             perform: go("/chat"),
             perm: "Permissions.Chat.Channels.View",
+            module: "chat",
           },
           {
             id: "nav-files",
@@ -136,6 +149,7 @@ export function CommandPaletteDialog({
             keywords: ["storage", "uploads", "documents"],
             perform: go("/files"),
             perm: "Permissions.Files.Upload",
+            module: "files",
           },
           {
             id: "nav-users",
@@ -172,6 +186,7 @@ export function CommandPaletteDialog({
             keywords: ["catalog", "sku", "inventory", "stock"],
             perform: go("/catalog/products"),
             perm: "Permissions.Catalog.Products.View",
+            module: "catalog",
           },
           {
             id: "nav-brands",
@@ -181,6 +196,7 @@ export function CommandPaletteDialog({
             keywords: ["catalog"],
             perform: go("/catalog/brands"),
             perm: "Permissions.Catalog.Brands.View",
+            module: "catalog",
           },
           {
             id: "nav-categories",
@@ -190,6 +206,7 @@ export function CommandPaletteDialog({
             keywords: ["catalog"],
             perform: go("/catalog/categories"),
             perm: "Permissions.Catalog.Categories.View",
+            module: "catalog",
           },
           {
             id: "nav-tickets",
@@ -199,6 +216,7 @@ export function CommandPaletteDialog({
             keywords: ["support", "issues", "helpdesk"],
             perform: go("/tickets"),
             perm: "Permissions.Tickets.View",
+            module: "tickets",
           },
           {
             id: "nav-invoices",
@@ -208,6 +226,7 @@ export function CommandPaletteDialog({
             keywords: ["billing", "payment"],
             perform: go("/invoices"),
             perm: "Permissions.Billing.View",
+            module: "billing",
           },
           {
             id: "nav-health",
@@ -216,6 +235,7 @@ export function CommandPaletteDialog({
             Icon: HeartPulse,
             keywords: ["status", "uptime", "system", "ready", "redis", "postgres"],
             perform: go("/system/health"),
+            module: "health",
           },
           {
             id: "nav-audits",
@@ -225,6 +245,7 @@ export function CommandPaletteDialog({
             keywords: ["audit", "log", "compliance", "security", "trace", "correlation"],
             perform: go("/system/audits"),
             perm: "Permissions.AuditTrails.View",
+            module: "auditing",
           },
           {
             id: "nav-trash",
@@ -234,6 +255,7 @@ export function CommandPaletteDialog({
             keywords: ["recycle", "deleted", "restore"],
             perform: go("/system/trash"),
             anyPerm: ALL_TRASH_PERMISSIONS,
+            anyModule: ["catalog", "tickets", "files"],
           },
           {
             id: "nav-sessions",
@@ -291,6 +313,7 @@ export function CommandPaletteDialog({
             keywords: ["new", "catalog", "sku"],
             perform: go("/catalog/products?action=create"),
             perm: "Permissions.Catalog.Products.Create",
+            module: "catalog",
           },
           {
             id: "create-brand",
@@ -300,6 +323,7 @@ export function CommandPaletteDialog({
             keywords: ["new", "catalog"],
             perform: go("/catalog/brands?action=create"),
             perm: "Permissions.Catalog.Brands.Create",
+            module: "catalog",
           },
           {
             id: "create-category",
@@ -309,6 +333,7 @@ export function CommandPaletteDialog({
             keywords: ["new", "catalog"],
             perform: go("/catalog/categories?action=create"),
             perm: "Permissions.Catalog.Categories.Create",
+            module: "catalog",
           },
           {
             id: "create-ticket",
@@ -318,6 +343,7 @@ export function CommandPaletteDialog({
             keywords: ["new", "support", "issue"],
             perform: go("/tickets?action=create"),
             perm: "Permissions.Tickets.Create",
+            module: "tickets",
           },
           {
             id: "create-channel",
@@ -327,6 +353,7 @@ export function CommandPaletteDialog({
             keywords: ["new", "chat", "channel"],
             perform: go("/chat?action=create-channel"),
             perm: "Permissions.Chat.Channels.Create",
+            module: "chat",
           },
           {
             id: "create-file",
@@ -336,6 +363,7 @@ export function CommandPaletteDialog({
             keywords: ["new", "upload", "attach"],
             perform: go("/files?action=upload"),
             perm: "Permissions.Files.Upload",
+            module: "files",
           },
         ],
       },
@@ -371,6 +399,7 @@ export function CommandPaletteDialog({
             hint: "Email preferences",
             Icon: Sparkles,
             perform: go("/settings/notifications"),
+            module: "notifications",
           },
           {
             id: "acc-appearance",

@@ -29,6 +29,11 @@ export const DEFAULT_PROFILE = {
  * these defaults (e.g. a chat spec can return real channels).
  */
 export async function installShellMocks(page: Page): Promise<void> {
+  // Baseline runtime config, so the suite doesn't depend on what this project's
+  // public/config.json happens to say (a project may hide modules there).
+  // Registered first, so a per-test mockRuntimeConfig/withDisabledModules wins.
+  await mockRuntimeConfig(page);
+
   // Long-lived realtime transports — abort so they neither keep the network
   // busy nor spew reconnect noise. The shell simply shows an "offline" dot.
   await page.route("**/api/v1/sse/**", (r: Route) => r.abort());
@@ -77,4 +82,55 @@ export function paged<T>(items: T[], overrides: Partial<{ pageNumber: number; pa
     hasPrevious: (overrides.pageNumber ?? 1) > 1,
     hasNext: (overrides.pageNumber ?? 1) < (overrides.totalPages ?? Math.max(1, Math.ceil(totalCount / pageSize))),
   };
+}
+
+/**
+ * The runtime config the app boots with in tests.
+ *
+ * Stubbed rather than served from `public/config.json` so a suite is hermetic:
+ * a project generated from this template can hide modules in its own
+ * config.json (see src/lib/modules.ts) without the inherited specs failing on
+ * routes that no longer exist. `disabledModules: []` means "show everything".
+ */
+export const TEST_RUNTIME_CONFIG = {
+  apiBase: "",
+  defaultTenant: "root",
+  demoMode: false,
+  inactivityIdleMs: 1_200_000,
+  inactivityWarningMs: 60_000,
+  disabledModules: [] as readonly string[] | string,
+};
+
+/**
+ * Serve /config.json with the test defaults, plus any overrides.
+ *
+ * `loadRuntimeConfig()` fetches once at boot with `cache: "no-store"`, so this
+ * must be registered before navigation. Playwright runs the most recently
+ * registered handler first, so a per-test call after `installShellMocks` wins.
+ */
+export async function mockRuntimeConfig(
+  page: Page,
+  overrides: Partial<typeof TEST_RUNTIME_CONFIG> = {},
+): Promise<void> {
+  await page.route("**/config.json", (route: Route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...TEST_RUNTIME_CONFIG, ...overrides }),
+    }),
+  );
+}
+
+/**
+ * Boot the app with these UI modules hidden.
+ *
+ * Passing `[]` is a meaningful case, not a no-op: it asserts that an empty list
+ * hides nothing (the failure mode this feature must never have). Accepts the
+ * comma-separated string form too, which is what envsubst renders.
+ */
+export async function withDisabledModules(
+  page: Page,
+  modules: readonly string[] | string,
+): Promise<void> {
+  await mockRuntimeConfig(page, { disabledModules: modules });
 }

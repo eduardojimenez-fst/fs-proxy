@@ -77,6 +77,11 @@ export async function installAdminShellMocks(
   page: Page,
   perms: readonly string[] = ADMIN_PERMS,
 ): Promise<void> {
+  // Baseline runtime config, so the suite doesn't depend on what this project's
+  // public/config.json happens to say (a project may hide modules there).
+  // Registered first, so a per-test mockRuntimeConfig/withDisabledModules wins.
+  await mockRuntimeConfig(page);
+
   await page.route("**/negotiate**", (r: Route) => r.abort());
   await page.route("**/api/v1/realtime/**", (r: Route) => r.abort());
 
@@ -105,4 +110,55 @@ export function paged<T>(
     hasPrevious: pageNumber > 1,
     hasNext: pageNumber < totalPages,
   };
+}
+
+/**
+ * The runtime config the app boots with in tests.
+ *
+ * Stubbed rather than served from `public/config.json` so a suite is hermetic:
+ * a project generated from this template can hide modules in its own
+ * config.json (see src/lib/modules.ts) without the inherited specs failing on
+ * routes that no longer exist. `disabledModules: []` means "show everything".
+ */
+export const TEST_RUNTIME_CONFIG = {
+  apiBase: "",
+  defaultTenant: "root",
+  dashboardUrl: "http://localhost:5174",
+  inactivityIdleMs: 600_000,
+  inactivityWarningMs: 60_000,
+  disabledModules: [] as readonly string[] | string,
+};
+
+/**
+ * Serve /config.json with the test defaults, plus any overrides.
+ *
+ * `loadRuntimeConfig()` fetches once at boot with `cache: "no-store"`, so this
+ * must be registered before navigation. Playwright runs the most recently
+ * registered handler first, so a per-test call after `installShellMocks` wins.
+ */
+export async function mockRuntimeConfig(
+  page: Page,
+  overrides: Partial<typeof TEST_RUNTIME_CONFIG> = {},
+): Promise<void> {
+  await page.route("**/config.json", (route: Route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...TEST_RUNTIME_CONFIG, ...overrides }),
+    }),
+  );
+}
+
+/**
+ * Boot the app with these UI modules hidden.
+ *
+ * Passing `[]` is a meaningful case, not a no-op: it asserts that an empty list
+ * hides nothing (the failure mode this feature must never have). Accepts the
+ * comma-separated string form too, which is what envsubst renders.
+ */
+export async function withDisabledModules(
+  page: Page,
+  modules: readonly string[] | string,
+): Promise<void> {
+  await mockRuntimeConfig(page, { disabledModules: modules });
 }

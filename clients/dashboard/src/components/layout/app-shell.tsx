@@ -13,6 +13,7 @@ import { ChatGlobalNotifier } from "@/components/notifications/chat-global-notif
 import { CommandPaletteRoot } from "@/components/command-palette/command-palette";
 import { InactivityGuard } from "@/components/auth/inactivity-guard";
 import { cn } from "@/lib/cn";
+import { isModuleEnabled } from "@/lib/modules";
 
 export function AppShell() {
   return (
@@ -61,8 +62,12 @@ export function AppShell() {
       {/* Background chat notifier — listens to ChatMessageCreated on the
           shared SignalR connection and toasts when the user isn't currently
           on that channel. Mounted inside the router subtree so the route
-          predicate (current /chat/:channelId) and navigate() both work. */}
-      <ChatGlobalNotifier />
+          predicate (current /chat/:channelId) and navigate() both work.
+          Skipped when chat is hidden — it's a leaf consumer, so this is safe.
+          NOTE: never gate SseProvider/RealtimeProvider themselves. Topbar
+          calls useSseStatus() unconditionally and the hook throws without its
+          provider, which would white-screen the shell. */}
+      {isModuleEnabled("chat") ? <ChatGlobalNotifier /> : null}
 
       {/* Mounted inside the router subtree so useNavigate inside the
           palette resolves correctly. */}

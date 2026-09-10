@@ -5,6 +5,7 @@ import { ProtectedRoute } from "@/auth/protected-route";
 import { RouteError } from "@/components/route-error";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
+import { anyModuleRoutes, moduleRoutes } from "@/lib/modules";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Lazy route boundaries
@@ -150,100 +151,141 @@ function withSuspense(node: React.ReactNode) {
   return <Suspense fallback={<RouteFallback />}>{node}</Suspense>;
 }
 
-export const router = createBrowserRouter([
-  {
-    path: "/login",
-    element: withSuspense(<LoginPage />),
-    errorElement: <RouteError />,
-  },
-  {
-    path: "/forgot-password",
-    element: withSuspense(<ForgotPasswordPage />),
-    errorElement: <RouteError />,
-  },
-  {
-    path: "/reset-password",
-    element: withSuspense(<ResetPasswordPage />),
-    errorElement: <RouteError />,
-  },
-  {
-    path: "/confirm-email",
-    element: withSuspense(<ConfirmEmailPage />),
-    errorElement: <RouteError />,
-  },
-  {
-    // Terminal state when the signed-in user's tenant is deactivated mid-session.
-    // Top-level (outside ProtectedRoute/AppShell) — the token is still valid but
-    // every request 403s, so there is no shell to render. query-client.ts routes
-    // here on detecting the deactivated-tenant 403.
-    path: "/tenant-deactivated",
-    element: withSuspense(<TenantDeactivatedPage />),
-    errorElement: <RouteError />,
-  },
-  {
-    // Terminal state when an operator's impersonation grant is revoked (or its
-    // short-lived token expires) mid-session. Top-level (outside
-    // ProtectedRoute/AppShell) — the token still decodes but every request
-    // 401s, so there is no shell to render. query-client.ts routes here on
-    // detecting the impersonation-revoked 401.
-    path: "/impersonation-ended",
-    element: withSuspense(<ImpersonationEndedPage />),
-    errorElement: <RouteError />,
-  },
-  {
-    element: <ProtectedRoute />,
-    errorElement: <RouteError />,
-    children: [
-      {
-        element: <AppShell />,
-        errorElement: <RouteError />,
-        children: [
-          { index: true, element: withSuspense(<OverviewPage />) },
-          { path: "activity", element: withSuspense(<ActivityPage />) },
-          { path: "subscription", element: withSuspense(<SubscriptionPage />) },
-          { path: "wallet", element: withSuspense(<WalletPage />) },
-          { path: "invoices", element: withSuspense(<InvoicesPage />) },
-          { path: "invoices/:id", element: withSuspense(<InvoiceDetailPage />) },
-          { path: "system/health", element: withSuspense(<HealthPage />) },
-          { path: "system/audits", element: withSuspense(<AuditsPage />) },
-          { path: "system/trash", element: withSuspense(<TrashPage />) },
-          { path: "system/sessions", element: withSuspense(<SessionsPage />) },
-          { path: "files", element: withSuspense(<MyFilesPage />) },
-          { path: "chat", element: withSuspense(<ChatPage />) },
-          { path: "chat/:channelId", element: withSuspense(<ChatPage />) },
-          { path: "tickets", element: withSuspense(<TicketsPage />) },
-          { path: "tickets/:ticketId", element: withSuspense(<TicketDetailPage />) },
-          { path: "identity", element: <Navigate to="/identity/users" replace /> },
-          { path: "identity/users", element: withSuspense(<UsersPage />) },
-          { path: "identity/users/:userId", element: withSuspense(<UserDetailPage />) },
-          { path: "identity/roles", element: withSuspense(<RolesPage />) },
-          { path: "identity/roles/:roleId", element: withSuspense(<RoleDetailPage />) },
-          { path: "identity/groups", element: withSuspense(<GroupsPage />) },
-          { path: "identity/groups/:groupId", element: withSuspense(<GroupDetailPage />) },
-          { path: "catalog", element: <Navigate to="/catalog/brands" replace /> },
-          { path: "catalog/brands", element: withSuspense(<BrandsPage />) },
-          { path: "catalog/categories", element: withSuspense(<CategoriesPage />) },
-          { path: "catalog/products", element: withSuspense(<ProductsPage />) },
-          {
-            path: "catalog/products/:productId",
-            element: withSuspense(<ProductDetailPage />),
-          },
-          {
-            path: "settings",
-            element: withSuspense(<SettingsLayout />),
-            children: [
-              { index: true, element: <Navigate to="profile" replace /> },
-              { path: "profile", element: withSuspense(<ProfileSettings />) },
-              { path: "security", element: withSuspense(<SecuritySettings />) },
-              { path: "appearance", element: withSuspense(<AppearanceSettings />) },
-              { path: "branding", element: withSuspense(<BrandingSettings />) },
-              { path: "notifications", element: withSuspense(<NotificationsSettings />) },
-              { path: "api-keys", element: withSuspense(<ApiKeysSettings />) },
-            ],
-          },
-        ],
-      },
-    ],
-  },
-  { path: "*", element: withSuspense(<NotFoundPage />) },
-]);
+let _router: ReturnType<typeof createBrowserRouter> | null = null;
+
+/**
+ * The data router, built on first call rather than at import time.
+ *
+ * `main.tsx` awaits `loadRuntimeConfig()` in its module *body*, but ESM
+ * evaluates the whole static-import graph (main -> App -> routes) before that
+ * body runs, and top-level await only suspends the awaiting module's own body.
+ * A router built at module scope would therefore run before the runtime config
+ * exists, and anything in the route table that reads `env` would throw during
+ * boot with no error boundary above it. Building lazily defers construction to
+ * `App`'s first render, which is after the await.
+ *
+ * A module-level singleton rather than `useState(createRouter)`: StrictMode
+ * double-invokes a useState initializer in dev, which would build two routers
+ * and leave two `history` listeners attached.
+ */
+export function getRouter() {
+  return (_router ??= createBrowserRouter([
+    {
+      path: "/login",
+      element: withSuspense(<LoginPage />),
+      errorElement: <RouteError />,
+    },
+    {
+      path: "/forgot-password",
+      element: withSuspense(<ForgotPasswordPage />),
+      errorElement: <RouteError />,
+    },
+    {
+      path: "/reset-password",
+      element: withSuspense(<ResetPasswordPage />),
+      errorElement: <RouteError />,
+    },
+    {
+      path: "/confirm-email",
+      element: withSuspense(<ConfirmEmailPage />),
+      errorElement: <RouteError />,
+    },
+    {
+      // Terminal state when the signed-in user's tenant is deactivated mid-session.
+      // Top-level (outside ProtectedRoute/AppShell) — the token is still valid but
+      // every request 403s, so there is no shell to render. query-client.ts routes
+      // here on detecting the deactivated-tenant 403.
+      path: "/tenant-deactivated",
+      element: withSuspense(<TenantDeactivatedPage />),
+      errorElement: <RouteError />,
+    },
+    {
+      // Terminal state when an operator's impersonation grant is revoked (or its
+      // short-lived token expires) mid-session. Top-level (outside
+      // ProtectedRoute/AppShell) — the token still decodes but every request
+      // 401s, so there is no shell to render. query-client.ts routes here on
+      // detecting the impersonation-revoked 401.
+      path: "/impersonation-ended",
+      element: withSuspense(<ImpersonationEndedPage />),
+      errorElement: <RouteError />,
+    },
+    {
+      element: <ProtectedRoute />,
+      errorElement: <RouteError />,
+      children: [
+        {
+          element: <AppShell />,
+          errorElement: <RouteError />,
+          children: [
+            { index: true, element: withSuspense(<OverviewPage />) },
+            ...moduleRoutes("activity", [
+              { path: "activity", element: withSuspense(<ActivityPage />) },
+            ]),
+            ...moduleRoutes("billing", [
+              { path: "subscription", element: withSuspense(<SubscriptionPage />) },
+              { path: "wallet", element: withSuspense(<WalletPage />) },
+              { path: "invoices", element: withSuspense(<InvoicesPage />) },
+              { path: "invoices/:id", element: withSuspense(<InvoiceDetailPage />) },
+            ]),
+            ...moduleRoutes("health", [
+              { path: "system/health", element: withSuspense(<HealthPage />) },
+            ]),
+            ...moduleRoutes("auditing", [
+              { path: "system/audits", element: withSuspense(<AuditsPage />) },
+            ]),
+            ...anyModuleRoutes(["catalog", "tickets", "files"], [
+              { path: "system/trash", element: withSuspense(<TrashPage />) },
+            ]),
+            { path: "system/sessions", element: withSuspense(<SessionsPage />) },
+            ...moduleRoutes("files", [
+              { path: "files", element: withSuspense(<MyFilesPage />) },
+            ]),
+            ...moduleRoutes("chat", [
+              { path: "chat", element: withSuspense(<ChatPage />) },
+              { path: "chat/:channelId", element: withSuspense(<ChatPage />) },
+            ]),
+            ...moduleRoutes("tickets", [
+              { path: "tickets", element: withSuspense(<TicketsPage />) },
+              { path: "tickets/:ticketId", element: withSuspense(<TicketDetailPage />) },
+            ]),
+            { path: "identity", element: <Navigate to="/identity/users" replace /> },
+            { path: "identity/users", element: withSuspense(<UsersPage />) },
+            { path: "identity/users/:userId", element: withSuspense(<UserDetailPage />) },
+            { path: "identity/roles", element: withSuspense(<RolesPage />) },
+            { path: "identity/roles/:roleId", element: withSuspense(<RoleDetailPage />) },
+            { path: "identity/groups", element: withSuspense(<GroupsPage />) },
+            { path: "identity/groups/:groupId", element: withSuspense(<GroupDetailPage />) },
+            ...moduleRoutes("catalog", [
+              { path: "catalog", element: <Navigate to="/catalog/brands" replace /> },
+              { path: "catalog/brands", element: withSuspense(<BrandsPage />) },
+              { path: "catalog/categories", element: withSuspense(<CategoriesPage />) },
+              { path: "catalog/products", element: withSuspense(<ProductsPage />) },
+              {
+                path: "catalog/products/:productId",
+                element: withSuspense(<ProductDetailPage />),
+              },
+            ]),
+            {
+              path: "settings",
+              element: withSuspense(<SettingsLayout />),
+              children: [
+                { index: true, element: <Navigate to="profile" replace /> },
+                { path: "profile", element: withSuspense(<ProfileSettings />) },
+                { path: "security", element: withSuspense(<SecuritySettings />) },
+                { path: "appearance", element: withSuspense(<AppearanceSettings />) },
+                ...moduleRoutes("multitenancy", [
+                  { path: "branding", element: withSuspense(<BrandingSettings />) },
+                ]),
+                ...moduleRoutes("notifications", [
+                  { path: "notifications", element: withSuspense(<NotificationsSettings />) },
+                ]),
+                { path: "api-keys", element: withSuspense(<ApiKeysSettings />) },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    { path: "*", element: withSuspense(<NotFoundPage />) },
+  ]));
+}

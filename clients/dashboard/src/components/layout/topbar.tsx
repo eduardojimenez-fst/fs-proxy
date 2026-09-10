@@ -41,6 +41,7 @@ import { useAuth } from "@/auth/use-auth";
 import { useSseStatus } from "@/sse/sse-context";
 import { useTheme } from "@/components/theme/theme-provider";
 import { cn } from "@/lib/cn";
+import { isModuleEnabled } from "@/lib/modules";
 
 // ─────────────────────────────────────────────────────────────────────
 // User dropdown helpers — match the dentalOS sidebar user-block pattern.
@@ -240,8 +241,9 @@ export function Topbar() {
       </button>
 
       {/* Chat unread badge — sums unreadCount across the user's channels.
-          Brand-primary chip to distinguish from the destructive-red bell. */}
-      <ChatUnreadBadge />
+          Brand-primary chip to distinguish from the destructive-red bell.
+          Skipped when chat is hidden: it links to /chat, which isn't routed. */}
+      {isModuleEnabled("chat") ? <ChatUnreadBadge /> : null}
 
       {/* Notification bell — bell badge + dropdown inbox. */}
       <NotificationBell />

@@ -7,8 +7,11 @@ set -e
 
 # Defaults for non-required values.
 : "${FSH_DEFAULT_TENANT:=root}"
+# Comma-separated UI module keys to hide (see clients/*/src/lib/modules.ts).
+# Empty means hide nothing, which is what an unset variable must mean.
+: "${FSH_DISABLED_MODULES:=}"
 
-export FSH_API_URL FSH_DASHBOARD_URL FSH_DEFAULT_TENANT
+export FSH_API_URL FSH_DASHBOARD_URL FSH_DEFAULT_TENANT FSH_DISABLED_MODULES
 
 # Render the runtime config from the template, writing into nginx's web root.
 envsubst < /usr/share/nginx/html/config.json.template > /usr/share/nginx/html/config.json

@@ -13,6 +13,7 @@ import {
 import { useRealtimeEvent } from "@/realtime/realtime-context";
 import { useAuth } from "@/auth/use-auth";
 import { cn } from "@/lib/cn";
+import { isModuleEnabled } from "@/lib/modules";
 
 /**
  * NotificationBell — topbar trigger with unread badge and a popover preview
@@ -170,15 +171,20 @@ export function NotificationBell() {
               </ul>
             </div>
 
-            <div className="border-t border-[var(--color-border)] px-3 py-2">
-              <Link
-                to="/notifications"
-                onClick={() => setOpen(false)}
-                className="inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-[var(--color-foreground)] hover:underline"
-              >
-                View all
-              </Link>
-            </div>
+            {/* Sole entry point to /notifications — that route isn't in the
+                sidebar — so it goes when the module is hidden. The bell itself
+                stays: pushes still arrive and are readable in this panel. */}
+            {isModuleEnabled("notifications") ? (
+              <div className="border-t border-[var(--color-border)] px-3 py-2">
+                <Link
+                  to="/notifications"
+                  onClick={() => setOpen(false)}
+                  className="inline-flex items-center gap-1 font-mono text-[10.5px] uppercase tracking-[0.14em] text-[var(--color-foreground)] hover:underline"
+                >
+                  View all
+                </Link>
+              </div>
+            ) : null}
           </div>
         </>
       )}

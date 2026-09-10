@@ -184,6 +184,9 @@ services:
       FSH_API_URL: ${FSH_API_URL:?FSH_API_URL is required}
       FSH_DASHBOARD_URL: ${FSH_DASHBOARD_URL}
       FSH_DEFAULT_TENANT: ${FSH_DEFAULT_TENANT:-root}
+      # UI modules to hide from this app, comma-separated (e.g. "billing,webhooks").
+      # Empty hides nothing. Keys: clients/admin/src/lib/modules.ts
+      FSH_DISABLED_MODULES: ${FSH_ADMIN_DISABLED_MODULES:-}
     ports:
       - "${FSH_ADMIN_PORT:-8081}:80"
 
@@ -198,6 +201,8 @@ services:
     environment:
       FSH_API_URL: ${FSH_API_URL}
       FSH_DEFAULT_TENANT: ${FSH_DEFAULT_TENANT:-root}
+      # Separate from the admin list — the two apps surface different modules.
+      FSH_DISABLED_MODULES: ${FSH_DASHBOARD_DISABLED_MODULES:-}
     ports:
       - "${FSH_DASHBOARD_PORT:-8082}:80"
 
