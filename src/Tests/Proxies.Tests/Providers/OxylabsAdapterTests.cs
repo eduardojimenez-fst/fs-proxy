@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using FSH.Modules.Proxies.Contracts;
@@ -45,6 +45,24 @@ public sealed class OxylabsAdapterTests
         result.Success.ShouldBeTrue();
         result.Proxies.Single().Host.ShouldBe("5.6.7.8");
         handler.LastRequest!.Headers.Authorization!.Scheme.ShouldBe("Basic");
+        var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(handler.LastRequest!.Headers.Authorization!.Parameter!));
+        decoded.ShouldBe("acct:secret");
+    }
+
+    [Fact]
+    public async Task SyncProxiesAsync_Should_AcceptCamelCaseCredentials()
+    {
+        // The admin UI's credentials placeholder for Oxylabs shows {"username":"...","password":"..."}
+        // (camelCase) while OxylabsCredentials declares PascalCase properties. Without case-insensitive
+        // deserialization both bind to null and the adapter sends Basic ":" — Oxylabs answers 401 with
+        // no parse error, so the misconfiguration is invisible. Mirrors the WebShareAdapter test.
+        var payload = new OxylabsProxyListResponse([new OxylabsProxyRecord("ext-9", "5.6.7.8", 60000, "u", "p", "active")]);
+        var (sut, handler) = CreateSut(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(payload) });
+        var account = ProviderAccount.Create("Oxylabs", ProxyProviderType.Oxylabs, "n/a");
+
+        var result = await sut.SyncProxiesAsync(account, "{\"username\":\"acct\",\"password\":\"secret\"}", CancellationToken.None);
+
+        result.Success.ShouldBeTrue();
         var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(handler.LastRequest!.Headers.Authorization!.Parameter!));
         decoded.ShouldBe("acct:secret");
     }

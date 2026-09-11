@@ -62,8 +62,14 @@ after the fact.
    - `10.0.1.4:4317` (OTLP collector, gRPC) — shared by both environments
 3. **IIS features and modules**
    - .NET 10 **Hosting Bundle** (installs `AspNetCoreModuleV2`) — the API is hosted in-process
-   - **URL Rewrite Module 2.1** — the admin site's `web.config` uses a `<rewrite>` section, and IIS
-     answers the whole site with a 500.19 if the module is missing
+   - **URL Rewrite Module 2.1** — the admin site's `web.config` uses a `<rewrite>` section. If the
+     module is missing, IIS cannot read that section and answers the **entire** site with a 500.19 —
+     not just deep links — with nothing in the browser console. Check before deploying:
+     ```powershell
+     Get-WebGlobalModule | Where-Object Name -like "*Rewrite*"   # must return RewriteModule
+     ```
+     Install from <https://www.iis.net/downloads/microsoft/url-rewrite>, then `iisreset`. No
+     redeploy needed afterwards — the `web.config` is already on the server.
    - **WebSocket Protocol** feature — SignalR at `/api/v1/realtime/hub` falls back to long polling
      without it
    - App pools `FS.Proxy.Api` and `FS.Proxy`: .NET CLR version **"No Managed Code"**
@@ -96,6 +102,61 @@ Post-publish checks (substitute the QA hostnames as appropriate):
 If the site returns a **500.30**, read `Logs\stdout_*.log`. That is almost always a configuration
 failure, and the stdout log is the only place the message appears. A missing connection string, Redis
 or JWT signing key gives you `Missing required configuration '<key>' in <environment>.`
+
+## Diagnosing a 500 on either site
+
+IIS only serves the detailed error to *local* requests, which is why a browser on your machine shows
+a bare 500 with an empty console. From the server itself:
+
+```powershell
+curl.exe -i -H "Host: proxy-qa.falcontenders.com" http://localhost/
+```
+
+That returns the full error page, including `Config Error` and a **Config Source** block naming the
+failing section and line number.
+
+The `500` alone is not enough — the substatus is what identifies the cause. It is in the IIS log:
+
+```powershell
+Get-Website | Select-Object Name, Id
+Get-Content C:\inetpub\logs\LogFiles\W3SVC<id>\u_ex*.log -Tail 50 | Select-String " 500 "
+```
+
+`500 19` is a configuration error (a `web.config` IIS cannot parse — a missing module, a duplicate
+collection entry); `500 0` is an application error, which on the static SPA site cannot happen. Note
+that the SPA site has **no** stdout log: `stdoutLogEnabled` is an ASP.NET Core Module setting and
+applies to the API only.
+
+Two checks that split the problem quickly:
+
+- Request `/config.json` directly. If even that 500s, `web.config` is not parsing and the whole site
+  is down. If it serves but `/` does not, the problem is narrower (rewrite rule or default document).
+- Rename `web.config` to `web.config.off` over FTP. If the site then comes up (with deep links
+  broken), the `web.config` is confirmed as the cause.
+
+Configuration parse failures are also logged under Event Viewer →
+`Applications and Services Logs → Microsoft → Windows → IIS-Configuration → Operational`.
+
+### 405 Method Not Allowed on PUT / DELETE
+
+A `405` whose response carries `Allow: GET, HEAD, OPTIONS, TRACE` did not come from the app — that
+verb list is IIS's, and ASP.NET Core would have answered with the verbs the route actually supports.
+The cause is the **WebDAV** module, which claims PUT and DELETE before the ASP.NET Core Module sees
+the request. The signature is distinctive: GET and POST work fine (so login, listing and the
+assign/unassign endpoints are unaffected), every update and delete endpoint returns 405, and the API
+logs show nothing at all because the request never reached it.
+
+`src/Host/FS.Proxy.Api/web.config` removes both the module and the handler, so a redeploy fixes it.
+Check whether a server has WebDAV at all with:
+
+```powershell
+Get-WebGlobalModule | Where-Object Name -like "*WebDAV*"
+```
+
+If WebDAV is not installed the `<remove>` entries are inert, so the same `web.config` is correct on
+every server. Uninstalling the "WebDAV Publishing" Windows feature is an equivalent server-side fix,
+but the `web.config` route is preferred: it travels with the deployment instead of relying on each
+box being configured the same way.
 
 ## Publish the admin SPA
 
@@ -178,6 +239,78 @@ a server, so a QA box never holds production credentials:
 # from the publish output, before copying to the QA server
 Remove-Item .\appsettings.Production.json, .\appsettings.Development.json
 ```
+
+### What `--seed` does and does not create
+
+In a deployed environment `--seed` creates the root tenant and its admin user, the **Manual** proxy
+provider account, and the reference tag categories. Seeing the tag categories in the UI is the quick
+confirmation that the seed ran to completion.
+
+It does **not** create the BrightData or WebShare provider accounts. That is deliberate, not a
+deployment problem: `ProxiesDbInitializer.SeedAsync` gates them behind `environment.IsDevelopment()`,
+and their credentials come from `dotnet user-secrets`, which the migrator only loads in Development —
+the point being that third-party API keys never enter source control. The seeded accounts are even
+named "(dev seed)".
+
+So in QA and Production, add them through the UI once per environment:
+**Proxies → Provider Accounts** (`/proxies/provider-accounts`). See
+[Provider account credentials](#provider-account-credentials) for the exact JSON each one expects.
+
+## Provider account credentials
+
+The **Credentials (JSON)** field in the Provider Account dialog takes one JSON object whose shape
+depends on the provider. The API encrypts it with `IProxySecretProtector` before storing it in
+`ProviderAccount.ProtectedCredentials`, and the value is never returned by any read endpoint — the
+edit dialog leaves the field blank and only overwrites when you type something.
+
+**Nothing validates the shape on save.** `CreateProviderAccountCommandValidator` only checks that the
+string is non-empty, so a wrong key name is accepted happily and only surfaces later as a failed sync.
+Property matching is case-insensitive, so `apiKey` and `ApiKey` both bind; the examples below use the
+camelCase the dialog's placeholder shows.
+
+### WebShare
+
+```json
+{ "apiKey": "<api key>" }
+```
+
+Authenticates as `Authorization: Token <apiKey>`. Sync is supported; per-proxy renew is not.
+
+### BrightData
+
+```json
+{
+  "apiToken": "<api token>",
+  "zone": "<zone name>",
+  "customerId": "<customer id>",
+  "gatewayPort": 44445,
+  "gatewayHost": "brd.superproxy.io"
+}
+```
+
+`gatewayHost` is optional and defaults to `brd.superproxy.io`; the other four are required.
+`gatewayPort` is a **number**, not a string. Sync is supported; per-proxy renew is not.
+
+### Oxylabs
+
+Oxylabs has no API key — it authenticates with HTTP Basic using the account username and password:
+
+```json
+{ "username": "<account username>", "password": "<account password>" }
+```
+
+In practice this account is usually fed by **file import** rather than the API sync, and that path
+uses the same two fields for a different purpose: they are the *fallback* credentials applied to rows
+in the uploaded file that leave the username/password columns blank (an Oxylabs export shares one
+account-wide credential across every proxy). You do not have to type the JSON for that — pass
+`defaultUsername` / `defaultPassword` once on an upload and the handler stores them in the same
+field, in the same shape.
+
+Because both uses share `ProtectedCredentials`, the file-import handler refuses to overwrite
+credentials that are not in the username/password shape: if an account was set up for API sync with
+a BrightData- or WebShare-shaped object, an upload carrying defaults fails with "already has
+credentials configured that are not file-import default-username/password style". Clear the
+account's credentials first if you mean to switch it to file-based sync.
 
 ## Configuration notes
 

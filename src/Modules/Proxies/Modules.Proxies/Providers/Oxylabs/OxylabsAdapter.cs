@@ -1,4 +1,4 @@
-using System.Net.Http.Headers;
+﻿using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -22,6 +22,13 @@ public sealed class OxylabsAdapter(IHttpClientFactory httpClientFactory) : IProx
     public bool SupportsSync => true;
     public bool SupportsRenew => false;
 
+    // Matches WebShareAdapter/BrightDataAdapter: case-insensitive + camelCase. The admin UI's
+    // credentials placeholder for Oxylabs is {"username":"...","password":"..."} (camelCase), while
+    // OxylabsCredentials declares PascalCase properties — under System.Text.Json's default
+    // case-sensitive matching that deserializes to an all-null record, producing a Basic auth header
+    // of ":" and an opaque 401 from Oxylabs rather than a parse failure.
+    private static readonly JsonSerializerOptions CredentialsJsonOptions = new(JsonSerializerDefaults.Web);
+
     public async Task<ProviderSyncResult> SyncProxiesAsync(ProviderAccount account, string decryptedCredentials, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(account);
@@ -32,7 +39,7 @@ public sealed class OxylabsAdapter(IHttpClientFactory httpClientFactory) : IProx
         OxylabsCredentials? credentials;
         try
         {
-            credentials = JsonSerializer.Deserialize<OxylabsCredentials>(decryptedCredentials);
+            credentials = JsonSerializer.Deserialize<OxylabsCredentials>(decryptedCredentials, CredentialsJsonOptions);
         }
         catch (JsonException ex)
         {
