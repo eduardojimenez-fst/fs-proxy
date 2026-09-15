@@ -33,6 +33,16 @@
     <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
+  <!-- The net10-only DI extensions (DependencyInjection/ServiceCollectionExtensions.cs, itself
+       guarded by #if NET) are the only thing in this package that need these — a DI-less .NET
+       Framework 4.8 scraper has no IServiceCollection/IConfiguration/IHttpClientBuilder at all, so
+       none of this may leak onto the netstandard2.0 target. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+  </ItemGroup>
+
   <!-- ProxySnapshot (Pool/) is internal on purpose — it is an implementation detail of ProxyPool,
        not part of the SDK's public surface. Proxy.Client.Tests still needs to construct one
        directly to pin the "always defensively copies" invariant against a caller-mutated array,
