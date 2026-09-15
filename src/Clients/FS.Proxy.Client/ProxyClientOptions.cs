@@ -1,4 +1,5 @@
 using System;
+using FSH.Proxy.Client.Caching;
 
 namespace FSH.Proxy.Client;
 
@@ -52,6 +53,15 @@ public sealed class ProxyClientOptions
     /// decision reads. Raise it only if you want the server-side series for its own sake.
     /// </summary>
     public double SuccessSampling { get; set; }
+
+    /// <summary>
+    /// Local fallback for the last known-good proxy set, consulted when the service is unreachable
+    /// (most importantly, at startup — see <see cref="FileSnapshotCache"/>). Defaults to
+    /// <see langword="null"/>, i.e. no local fallback: a service outage is then a hard failure,
+    /// same as before this cache existed. Opt in with a <see cref="FileSnapshotCache"/>, or a custom
+    /// <see cref="IProxySnapshotCache"/>.
+    /// </summary>
+    public IProxySnapshotCache? SnapshotCache { get; set; }
 
     public void Validate()
     {
