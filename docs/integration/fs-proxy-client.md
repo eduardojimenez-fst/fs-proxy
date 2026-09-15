@@ -14,7 +14,7 @@ particular) rather than repeating it.
 | | |
 |---|---|
 | Package id | `FS.Proxy.Client` |
-| Version | `0.1.0-preview.2` |
+| Version | `0.1.0-preview.3` |
 | Target frameworks | `netstandard2.0` (legacy .NET Framework 4.8 scrapers) and `net10.0` (TAG, new code) |
 
 Published to the `fsh-local` NuGet feed, a **folder feed on the developer machine that built it**
@@ -44,11 +44,11 @@ and reference the package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.2" />
+  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.3" />
 </ItemGroup>
 ```
 
-`0.1.0-preview.2` is a prerelease version; either pass `--prerelease` to tooling that filters it out
+`0.1.0-preview.3` is a prerelease version; either pass `--prerelease` to tooling that filters it out
 by default, or pin the exact version as above (recommended while this package is pre-1.0).
 
 ## 2. Configuration — `ProxyClientOptions`
@@ -72,6 +72,7 @@ configuration binding (§5, Level 2) is a convenience on top, never a requiremen
 | `FeedbackQueueCapacity` | `int` | `10,000` | Bound on the in-memory feedback queue; overflow drops the event rather than blocking the scrape. |
 | `SuccessSampling` | `double` | `0` | Fraction of `Success` outcomes actually transmitted, `[0, 1]`. Defaults to 0 — see §7. `Validate()` throws outside `[0, 1]`. |
 | `SnapshotCache` | `IProxySnapshotCache?` | `null` (no fallback) | Opt-in local fallback for the last known-good proxy set (`FileSnapshotCache`, shown in §3). Stores credentials in plaintext by deliberate decision — see the note below the code sample in §3 before wiring one up. |
+| `ShutdownToken` | `CancellationToken` | `CancellationToken.None` | The ONLY cancellation source `AddFsProxyRotation`'s handler treats as "not the proxy's fault, don't report anything" — see §5. Level 2's DI path (`AddFsProxyClient`) wires this automatically from `IHostApplicationLifetime.ApplicationStopping` when that service is registered; set it by hand for standalone `FsProxyRotationHandler` usage with no DI container, or leave it at the default if there is no shutdown signal to wire up. |
 
 Call `options.Validate()` before use if you build `ProxyClientOptions` by hand (Levels 0/1); it throws
 `InvalidOperationException` naming the first violated constraint. `AddFsProxyClient` (Level 2) calls it
@@ -596,11 +597,27 @@ builder.Services.AddHttpClient("mercadopublico")
 
 `AddFsProxyClient` binds a `ProxyClientOptions` from the given section, validates it, and registers a
 singleton `IProxySource` — call `WarmupAsync()` yourself (e.g. from an `IHostedService`) if you want
-the first request to hit a warm pool rather than an empty one that fills on first use.
+the first request to hit a warm pool rather than an empty one that fills on first use. It also wires
+`ProxyClientOptions.ShutdownToken` from `IHostApplicationLifetime.ApplicationStopping` automatically
+when that service is registered (the ordinary case for anything built on the generic host).
 `AddFsProxyRotation(params string[] tags)` adds `FsProxyRotationHandler` to a named/typed
 `HttpClient`'s pipeline: it leases a proxy from the container's `IProxySource` per request, sends
 through it, classifies the response/exception, and reports the outcome automatically — nothing else to
 call.
+
+**A cancelled request is reported as `Timeout`, unless `ShutdownToken` has fired.** `HttpClient` does
+not hand a `DelegatingHandler` the caller's own token — it links the caller's token with
+`HttpClient.Timeout` into ONE token before this handler (or any other) ever sees it. So from inside
+this handler, a cancelled request is, in general, indistinguishable from `HttpClient.Timeout` elapsing
+after the proxy accepted the connection and went silent — exactly the outcome the design spec's own
+classification table calls `Timeout`. The only cancellation this handler CAN reliably tell apart from
+that is a deliberate shutdown, via `ShutdownToken`: only that token firing suppresses reporting
+entirely. Everything else reaching this handler as a cancellation is reported `Timeout`. If your
+`HttpClient` pipeline hands this handler a shorter, unrelated per-request `CancellationToken` (a
+request-scoped deadline that is not the host shutting down), a genuine cancellation there will also be
+reported as `Timeout` — a known, accepted imperfection: guessing further (e.g. by comparing elapsed
+time against `HttpClient.Timeout`) would need to be right about the *destination's* timeout,
+not just this handler's, and being wrong in that direction is worse than the current default.
 
 **Configuring `SnapshotCache` (§3's startup-outage protection) from this DI path** needs the second
 `AddFsProxyClient` overload — `ProxyClientOptions.SnapshotCache` is an `IProxySnapshotCache` interface,

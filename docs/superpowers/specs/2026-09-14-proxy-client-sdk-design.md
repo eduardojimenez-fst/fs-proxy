@@ -197,6 +197,10 @@ options.ClassifyResponse = resp => LooksLikeRobotCheck(resp) ? ProxyOutcome.Bann
 
 This hook carries the most valuable signal the team has — the kind that currently costs a captcha solve to learn.
 
+### Cancellation at the Level-2 handler, specifically
+
+Table row one above ("proxy accepted the connection and went silent" ⇒ `Timeout`) assumes the classifier can see an inner `TimeoutException`. `FsProxyRotationHandler` (Level 2) cannot rely on that: `HttpClient` links the caller's own token with `HttpClient.Timeout` into ONE token before a `DelegatingHandler` ever runs, so the `cancellationToken` a handler's `SendAsync` receives cannot be told apart, from inside the handler, between "the destination went silent and `HttpClient.Timeout` fired" and "something else cancelled this call." An earlier implementation treated any cancellation of that parameter as "our own shutdown, skip reporting" — reasoning that does not hold, since the parameter is never actually the caller's own token in isolation, and skipping suppressed exactly the row-one signal this section exists to protect. The shipped resolution: a dedicated `ProxyClientOptions.ShutdownToken`, populated by the DI path from `IHostApplicationLifetime.ApplicationStopping`, is the only cancellation source the handler treats as "not the proxy's fault." Any other cancellation reaching the handler is reported as `Timeout` — deliberately not inferred from elapsed time against `HttpClient.Timeout`, which would still misclassify a short, unrelated per-request deadline and adds a comparison that can be wrong in a worse direction than a flat default.
+
 ---
 
 ## 4. Feedback buffering and the batch endpoint
