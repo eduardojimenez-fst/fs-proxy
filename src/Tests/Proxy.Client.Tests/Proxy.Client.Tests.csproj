@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>Proxy.Client.Tests</RootNamespace>
+		<AssemblyName>Proxy.Client.Tests</AssemblyName>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<NoWarn>$(NoWarn);CA1515;CA1861;CA1707;CA2000</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="NSubstitute" />
+		<PackageReference Include="Shouldly" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="coverlet.collector" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\Clients\FS.Proxy.Client\FS.Proxy.Client.csproj" />
+		<!-- Referenced ONLY by the ProxyTags drift test (a later task), which compares the SDK's
+		     constants against the server's seed catalog. -->
+		<ProjectReference Include="..\..\Modules\Proxies\Modules.Proxies\Modules.Proxies.csproj" />
+	</ItemGroup>
+
+</Project>

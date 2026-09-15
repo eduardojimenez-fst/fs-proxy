@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Directory.Build.props sets the SINGULAR TargetFramework for everything under src/.
+         With both properties set, MSBuild honours the singular one and silently builds net10
+         only. Clearing it is what makes multi-targeting take effect. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+
+    <RootNamespace>FSH.Proxy.Client</RootNamespace>
+    <AssemblyName>FS.Proxy.Client</AssemblyName>
+
+    <IsPackable>true</IsPackable>
+    <PackageId>FS.Proxy.Client</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Description>Client SDK for the FS Proxy management service: pooled proxy leasing with outcome feedback, for .NET Framework 4.8 and .NET 10 scrapers.</Description>
+
+    <!-- Directory.Build.targets turns on IncludeSymbols + snupkg for every packable project.
+         A folder feed serves .nupkg only, so a .snupkg there is dead weight and gives no
+         step-into debugging. Embedding the PDB in the DLL does. -->
+    <IncludeSymbols>false</IncludeSymbols>
+    <DebugType>embedded</DebugType>
+    <EmbedAllSources>true</EmbedAllSources>
+  </PropertyGroup>
+
+  <!-- netstandard2.0 has no built-in System.Text.Json and no nullable attributes. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+</Project>
