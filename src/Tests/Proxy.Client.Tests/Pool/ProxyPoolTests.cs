@@ -266,6 +266,50 @@ public sealed class ProxyPoolTests
             Arg.Is<IReadOnlyList<ProxyEndpoint>>(list => list.Select(e => e.Id).SequenceEqual(endpoints.Select(e => e.Id))));
     }
 
+    // Fix round 1: the write-through to the cache is not limited to WarmupAsync — a RefreshAsync
+    // that is NOT a warmup must also write its successful fetch, or a long-running process's on-disk
+    // fallback goes stale (it would forever reflect only the very first fetch at process start).
+    [Fact]
+    public async Task RefreshAsync_Should_Write_A_Successful_Fetch_To_The_Cache()
+    {
+        var initial = Endpoints(2);
+        var cache = Substitute.For<IProxySnapshotCache>();
+        var client = ClientReturning(initial);
+        var pool = new ProxyPool(client, Options(cache), ["country:cl"]);
+        await pool.WarmupAsync(CancellationToken.None);
+        cache.ClearReceivedCalls();
+
+        var refreshed = Endpoints(2);
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>(refreshed));
+        await pool.RefreshAsync(CancellationToken.None);
+
+        cache.Received(1).Write(
+            Arg.Any<string>(),
+            Arg.Is<IReadOnlyList<ProxyEndpoint>>(list => list.Select(e => e.Id).SequenceEqual(refreshed.Select(e => e.Id))));
+    }
+
+    // Fix round 1, the half most likely to regress silently: an empty refresh result must NOT
+    // overwrite what is already on disk. A stale-but-parseable cached snapshot looks exactly like a
+    // fresh one to Read's TTL check, so overwriting a good cache entry with "nothing" here would
+    // quietly destroy the fallback the cache exists to provide.
+    [Fact]
+    public async Task RefreshAsync_Should_Not_Overwrite_The_Cache_When_The_Service_Returns_Empty()
+    {
+        var initial = Endpoints(2);
+        var cache = Substitute.For<IProxySnapshotCache>();
+        var client = ClientReturning(initial);
+        var pool = new ProxyPool(client, Options(cache), ["country:cl"]);
+        await pool.WarmupAsync(CancellationToken.None);
+        cache.ClearReceivedCalls();
+
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>([]));
+        await pool.RefreshAsync(CancellationToken.None);
+
+        cache.DidNotReceive().Write(Arg.Any<string>(), Arg.Any<IReadOnlyList<ProxyEndpoint>>());
+    }
+
     // 11. Refresh replaces the snapshot atomically — a proxy removed server-side stops being returned.
     [Fact]
     public async Task RefreshAsync_Should_Stop_Returning_A_Proxy_Removed_Server_Side()

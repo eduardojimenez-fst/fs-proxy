@@ -110,11 +110,11 @@ public sealed class ProxyPool
 
     /// <summary>
     /// Fills the pool for the first time: requests <c>PoolSize</c> proxies from the service and, on
-    /// success, both installs the new snapshot and writes it through to the configured
-    /// <c>ProxyClientOptions.SnapshotCache</c> (if any). If the service throws or answers with an
-    /// empty list, falls back to the cache instead — the scenario this exists for is a scraper
-    /// starting cold while the proxy service is unreachable, which without a cache would mean the
-    /// process cannot start at all.
+    /// success, installs the new snapshot (see <see cref="AcceptFetch"/> — this write-through applies
+    /// to every successful fetch, not only a warmup). If the service throws or answers with an empty
+    /// list, falls back to the cache instead — the scenario this exists for is a scraper starting
+    /// cold while the proxy service is unreachable, which without a cache would mean the process
+    /// cannot start at all.
     /// </summary>
     public async Task WarmupAsync(CancellationToken ct = default)
     {
@@ -134,10 +134,8 @@ public sealed class ProxyPool
         }
 #pragma warning restore CA1031
 
-        if (endpoints.Count > 0)
+        if (AcceptFetch(endpoints))
         {
-            _snapshot = new ProxySnapshot(endpoints, _clock());
-            _options.SnapshotCache?.Write(_cacheKey, endpoints);
             return;
         }
 
@@ -153,11 +151,12 @@ public sealed class ProxyPool
     }
 
     /// <summary>
-    /// Re-requests <c>PoolSize</c> proxies and, on success, replaces the snapshot wholesale by a
-    /// single reference assignment — a proxy the service no longer offers simply is not in the new
+    /// Re-requests <c>PoolSize</c> proxies and, on success, replaces the snapshot wholesale (see
+    /// <see cref="AcceptFetch"/>) — a proxy the service no longer offers simply is not in the new
     /// list and stops being returned. On an empty result (no active proxy for these tags) or any
-    /// transport exception, the previous snapshot is left exactly as it was: a transient outage must
-    /// not empty the pool out from under every scraper reading it.
+    /// transport exception, the previous snapshot — and whatever is on disk in
+    /// <c>ProxyClientOptions.SnapshotCache</c> — is left exactly as it was: a transient outage must
+    /// not empty the pool, or the cache, out from under every scraper reading it.
     /// </summary>
     public async Task RefreshAsync(CancellationToken ct = default)
     {
@@ -178,14 +177,37 @@ public sealed class ProxyPool
         }
 #pragma warning restore CA1031
 
+        // An empty result (e.g. the service's 404 for "no active proxy matches these tags") is an
+        // ordinary, expected state, not an error — AcceptFetch is itself a no-op for it, so neither
+        // the in-memory snapshot nor the on-disk cache is touched.
+        AcceptFetch(endpoints);
+    }
+
+    /// <summary>
+    /// The single place a fetched proxy list is turned into the pool's new state, shared by
+    /// <see cref="WarmupAsync"/> and <see cref="RefreshAsync"/> so both get the same write-through to
+    /// <c>ProxyClientOptions.SnapshotCache</c> for free rather than each remembering to call it
+    /// separately. A non-empty <paramref name="endpoints"/> both swaps the in-memory snapshot AND
+    /// writes it to the cache; an empty one does neither and returns <see langword="false"/> —
+    /// crucially, this means a long-running process's on-disk fallback tracks its most recent
+    /// successful fetch, not just the one from process startup. Overwriting a good cached snapshot
+    /// with an empty result would destroy the fallback the cache exists to provide, so an empty fetch
+    /// must never reach <c>IProxySnapshotCache.Write</c>.
+    /// </summary>
+    /// <returns><see langword="true"/> if <paramref name="endpoints"/> was non-empty and became the new snapshot.</returns>
+    private bool AcceptFetch(IReadOnlyList<ProxyEndpoint> endpoints)
+    {
         if (endpoints.Count == 0)
         {
-            // An ordinary, expected state (e.g. the service's 404 for "no active proxy matches
-            // these tags") — not an error, and not a reason to empty the pool.
-            return;
+            return false;
         }
 
         _snapshot = new ProxySnapshot(endpoints, _clock());
+        // IProxySnapshotCache.Write is documented to never throw (see the interface and
+        // FileSnapshotCache's remarks) — a cache write is best-effort by contract, so no additional
+        // try/catch belongs here.
+        _options.SnapshotCache?.Write(_cacheKey, endpoints);
+        return true;
     }
 
     /// <summary>
