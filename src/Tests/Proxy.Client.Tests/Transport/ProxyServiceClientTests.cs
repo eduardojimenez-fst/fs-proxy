@@ -74,6 +74,51 @@ public sealed class ProxyServiceClientTests
         result[0].Protocol.ShouldBe(ProxyProtocol.Socks5);
     }
 
+    // Important 2 (fix round 2): a single malformed record must not abort the whole tag set's
+    // fetch. Proxy.Username/ProtectedPassword are both nullable server-side with no validator
+    // forbidding a password with no username — exactly the combination ProxyEndpoint's own
+    // constructor now rejects (a promoted-minor fix). Before this, one bad row threw out of this
+    // method entirely; ProxyPool.RefreshAsync/WarmupAsync swallow that and keep the previous
+    // snapshot, so one malformed proxy turned into the ENTIRE tag set serving stale until
+    // StaleCeiling and then hard-failing, instead of just that one proxy being unusable.
+    [Fact]
+    public async Task RequestAsync_Should_Skip_A_Malformed_Record_And_Still_Return_The_Others()
+    {
+        const string body = """
+        [
+          {"id":"11111111-1111-1111-1111-111111111111","host":"203.0.113.10","port":8080,"protocol":"Http","username":null,"password":"s3cret"},
+          {"id":"22222222-2222-2222-2222-222222222222","host":"203.0.113.20","port":8080,"protocol":"Http","username":"u","password":"p"}
+        ]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 25, CancellationToken.None);
+
+        result.Count.ShouldBe(1, "the malformed record must be skipped, not thrown for.");
+        result[0].Host.ShouldBe("203.0.113.20");
+        sut.LastSkippedMalformedCount.ShouldBe(1);
+    }
+
+    // Companion: a batch with nothing malformed must report zero skips, not a stale value from a
+    // previous call.
+    [Fact]
+    public async Task RequestAsync_Should_Report_Zero_Skipped_When_Nothing_Is_Malformed()
+    {
+        const string body = """
+        [{"id":"11111111-1111-1111-1111-111111111111","host":"203.0.113.10","port":8080,"protocol":"Http","username":"u","password":"p"}]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 25, CancellationToken.None);
+
+        result.Count.ShouldBe(1);
+        sut.LastSkippedMalformedCount.ShouldBe(0);
+    }
+
     [Fact]
     public async Task RequestAsync_Should_Throw_On_An_Unauthorized_Response()
     {

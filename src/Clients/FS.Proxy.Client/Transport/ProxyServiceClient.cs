@@ -109,8 +109,61 @@ public sealed class ProxyServiceClient : IProxyServiceClient
             return Array.Empty<ProxyEndpoint>();
         }
 
-        return items.Select(i => new ProxyEndpoint(i.Id, i.Host, i.Port, i.Protocol, i.Username, i.Password)).ToList();
+        return MapEndpointsSkippingMalformed(items);
     }
+
+    /// <summary>
+    /// Maps every wire item to a <see cref="ProxyEndpoint"/>, SKIPPING (and counting, in
+    /// <see cref="LastSkippedMalformedCount"/>) any that fail <see cref="ProxyEndpoint"/>'s own
+    /// constructor guard — a password with no username — instead of letting that one bad record
+    /// abort the whole call.
+    /// </summary>
+    /// <remarks>
+    /// <c>Proxy.Username</c>/<c>ProtectedPassword</c> are both nullable server-side with no validator
+    /// forbidding this specific combination, so a single malformed row is reachable in practice, not
+    /// hypothetical. Before this, mapping the whole list with one <c>Select</c> meant that ONE bad
+    /// record threw out of this method entirely; <c>ProxyPool.RefreshAsync</c> (and
+    /// <c>WarmupAsync</c>) swallow any exception from this call and simply keep the previous snapshot
+    /// — so one malformed proxy silently turned into the ENTIRE tag set's refresh failing over and
+    /// over, serving stale until <c>StaleCeiling</c> and then hard-failing, instead of just that one
+    /// proxy being unusable. <see cref="ProxyEndpoint"/>'s own constructor guard is kept — it still
+    /// catches the mistake — this only bounds its blast radius to the one record that has it.
+    /// </remarks>
+    private List<ProxyEndpoint> MapEndpointsSkippingMalformed(List<ProxyConnectionWireDto> items)
+    {
+        var endpoints = new List<ProxyEndpoint>(items.Count);
+        int skipped = 0;
+
+        foreach (ProxyConnectionWireDto item in items)
+        {
+#pragma warning disable CA1031 // ProxyEndpoint's constructor throws ArgumentException for exactly one
+            // reason today (a password with no username), but catching the general Exception type
+            // here is deliberate: this method's whole job is "never let one malformed record take the
+            // rest of the tag set down with it," and a narrower catch would leave that promise broken
+            // for any OTHER validation ProxyEndpoint's constructor gains later.
+            try
+            {
+                endpoints.Add(new ProxyEndpoint(item.Id, item.Host, item.Port, item.Protocol, item.Username, item.Password));
+            }
+            catch (Exception)
+            {
+                skipped++;
+            }
+#pragma warning restore CA1031
+        }
+
+        LastSkippedMalformedCount = skipped;
+        return endpoints;
+    }
+
+    /// <summary>
+    /// Count of endpoints skipped by the most recent <see cref="RequestAsync"/> call because they
+    /// failed <see cref="ProxyEndpoint"/>'s own construction guard — see
+    /// <see cref="MapEndpointsSkippingMalformed"/>. Reset (not accumulated) at the start of every
+    /// call. Test-only visibility; not part of the public SDK surface — there is no logging
+    /// abstraction wired into this package to report it through instead (see the design spec).
+    /// </summary>
+    internal int LastSkippedMalformedCount { get; private set; }
 
     /// <inheritdoc />
     public async Task RequestFeedbackAsync(IReadOnlyList<FeedbackItem> events, CancellationToken ct)
