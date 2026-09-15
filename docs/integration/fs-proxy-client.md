@@ -14,7 +14,7 @@ particular) rather than repeating it.
 | | |
 |---|---|
 | Package id | `FS.Proxy.Client` |
-| Version | `0.1.0-preview.3` |
+| Version | `0.1.0-preview.4` |
 | Target frameworks | `netstandard2.0` (legacy .NET Framework 4.8 scrapers) and `net10.0` (TAG, new code) |
 
 Published to the `fsh-local` NuGet feed, a **folder feed on the developer machine that built it**
@@ -44,11 +44,11 @@ and reference the package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.3" />
+  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.4" />
 </ItemGroup>
 ```
 
-`0.1.0-preview.3` is a prerelease version; either pass `--prerelease` to tooling that filters it out
+`0.1.0-preview.4` is a prerelease version; either pass `--prerelease` to tooling that filters it out
 by default, or pin the exact version as above (recommended while this package is pre-1.0).
 
 ## 2. Configuration — `ProxyClientOptions`
