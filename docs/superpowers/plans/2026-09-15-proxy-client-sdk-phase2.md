@@ -355,12 +355,10 @@ public sealed class ProxyOutcomeClassifierTests
     }
 
     [Fact]
-    public void FromException_Should_Classify_A_WebException_Carrying_A_Response_By_Its_Status()
+    public void FromException_Should_Classify_An_HttpRequestException_By_Its_Status_Code()
     {
-        // A 403 arrives at a WebRequest caller as a WebException with ProtocolError, and the real
-        // signal is the status code on the inner response. Reporting Failure here would blame the
-        // proxy for being banned, which is a different remedy.
-        var response = new HttpResponseMessage(HttpStatusCode.Forbidden);
+        // A 403 carried on the exception is the destination rejecting the IP, not a broken proxy.
+        // Reporting Failure here would prescribe the wrong remedy.
         var exception = new HttpRequestException("forbidden", null, HttpStatusCode.Forbidden);
 
         ProxyOutcomeClassifier.FromException(exception).ShouldBe(ProxyOutcome.Banned);
@@ -499,7 +497,24 @@ public static class ProxyOutcomeClassifier
 dotnet test src/Tests/Proxy.Client.Tests/Proxy.Client.Tests.csproj --filter "FullyQualifiedName~ProxyOutcomeClassifierTests"
 ```
 
-Expected: all passing. If the `netstandard2.0` target rejects `HttpRequestException.StatusCode` (it does not exist there), guard that `case` with `#if NET` and add a test note — do not delete the branch from the net10 target.
+Expected: all passing.
+
+**`HttpRequestException.StatusCode` does not exist on `netstandard2.0`** — it was added in .NET 5.
+That `case` will not compile on that target, so it must be guarded from the start:
+
+```csharp
+#if NET
+            case HttpRequestException httpRequest when httpRequest.StatusCode.HasValue:
+                return FromStatusCode(httpRequest.StatusCode.Value);
+#endif
+```
+
+This is not a degradation for the legacy scrapers: they are on `WebRequest` and throw
+`WebException`, which the next `case` handles by reading the status off `HttpWebResponse`. The
+guarded branch exists for net10 callers using `HttpClient`.
+
+The test that covers it (`FromException_Should_Classify_An_HttpRequestException_By_Its_Status_Code`)
+runs on the net10 test project, so it exercises the compiled branch.
 
 - [ ] **Step 5: Build both targets and commit**
 
