@@ -620,30 +620,58 @@ public sealed class ProxySourceTests
     [Fact]
     public async Task Report_Should_Not_Dispatch_One_Size_Triggered_Flush_Attempt_Per_Call_While_The_Transport_Is_Failing()
     {
+        // Fix round 3: an earlier version of this test fired all 20 Reports in one tight synchronous
+        // loop. Report #3 crosses the threshold and takes the dispatch gate; Reports #4-20 finish in
+        // microseconds — almost certainly before the dispatched Task.Run is even picked up by the
+        // thread pool — so they were suppressed by the PRE-EXISTING dispatch gate alone, not by the
+        // cooldown this test claims to cover. Deleting the cooldown check left this test passing on
+        // most runs (merely flaky, never reliably failing), because the gate was doing all the work.
+        // This version forces the FIRST dispatched attempt to actually complete (observed via a
+        // signal set the instant the fake transport is invoked) before issuing any more Reports, so
+        // the gate has already been released by the time the remaining 17 arrive and re-cross the
+        // threshold on their own — at that point only the cooldown can still be suppressing dispatch.
         var client = ClientReturning(Endpoints(1));
+        var firstAttemptObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromException(new HttpRequestException("boom")));
+            .Returns(_ =>
+            {
+                firstAttemptObserved.TrySetResult(true);
+                return Task.FromException(new HttpRequestException("boom"));
+            });
         var options = Options();
         options.Tags = ["country:cl"];
         options.FeedbackBatchSize = 3;
-        options.FeedbackFlushInterval = TimeSpan.FromHours(1); // the periodic timer must not be what's firing here
+        options.FeedbackFlushInterval = TimeSpan.FromHours(1); // the cooldown window; also keeps the periodic timer quiet
         var source = new ProxySource(options, client);
         await source.WarmupAsync();
 
-        for (int i = 0; i < 20; i++)
+        // Crosses the threshold once, dispatching the FIRST size-triggered flush attempt.
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+
+        Task firstAttemptOrTimeout = await Task.WhenAny(firstAttemptObserved.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        firstAttemptOrTimeout.ShouldBe(firstAttemptObserved.Task, "the first size-triggered flush attempt must actually reach the transport before this test proceeds.");
+
+        // The signal above fires the instant RequestFeedbackAsync is INVOKED, not once its catch
+        // block has recorded the failure timestamp and the dispatching Task.Run's own `finally` has
+        // released the gate — those finish a moment later. This delay lets that settle before the
+        // tight loop below runs, so it is the COOLDOWN, not a still-held gate, being exercised.
+        await Task.Delay(200);
+
+        // Every 3 of these re-crosses FeedbackBatchSize again — DrainBatch already removed the first
+        // 3 from the queue regardless of whether the send succeeded — and the gate is free by now, so
+        // without the cooldown several more attempts would fire here.
+        for (int i = 0; i < 17; i++)
         {
             source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
         }
 
-        // Give any dispatched flush attempts time to actually run.
+        // Give any (incorrect) additional dispatch a fair chance to happen.
         await Task.Delay(300);
 
-        // Without the cooldown this would be roughly one RequestFeedbackAsync call per Report once
-        // the queue first crosses FeedbackBatchSize (a failed periodic-style flush drops only its own
-        // batch per I3, so the backlog stays at/above the threshold) — i.e. many calls. With the
-        // cooldown, only the very first size-triggered attempt (before any failure has been recorded
-        // yet) should have reached the transport. Asserted BEFORE disposal below, since disposal's
-        // own terminal flush would add one more (unrelated) call and confuse this count.
+        // Asserted BEFORE disposal below, since disposal's own terminal flush would add one more
+        // (unrelated) call and confuse this count.
         _ = client.Received(1).RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
 
         await source.DisposeAsync();

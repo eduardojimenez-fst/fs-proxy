@@ -239,20 +239,22 @@ public sealed class FsProxyRotationHandlerTests
         source.Received(1).Report(proxy.Id, ProxyOutcome.Timeout, "timed out");
     }
 
-    // I1: a cooperative cancellation of the CALLER's own token (a graceful shutdown with this
-    // request still in flight is the common case) must not be reported at all — it is not the
-    // proxy's fault, and reporting Failure here would both quarantine a healthy proxy locally and
-    // emit a false negative signal to the policy engine on every such shutdown. Still rethrown
-    // unchanged: this handler observes, it never changes control flow.
-    // Round 2 correction: HttpClient does NOT hand a DelegatingHandler the caller's own token — it
-    // links the caller's token WITH HttpClient.Timeout into ONE token before this handler ever sees
-    // it. So a cancelled `cancellationToken` parameter is, from in here, indistinguishable from
-    // HttpClient.Timeout elapsing — the single most valuable bad-proxy signal this SDK carries ("the
-    // proxy accepted the connection and went silent"). This test drives the handler the way a REAL
-    // HttpClient.Timeout actually would — a cancelled token, no ShutdownToken configured — and pins
-    // that it is reported as Timeout, not skipped and not Failure. The earlier (round-1) version of
-    // this test asserted DidNotReceive() here, which was exactly the bug this round fixes: it turned
-    // an over-reporting problem into an under-reporting one on the signal that matters most.
+    // I1 (round 1) reasoned that a cooperative cancellation of the CALLER's own token — a graceful
+    // shutdown with this request still in flight — is not the proxy's fault, and skipped Report
+    // entirely for any cancelled `cancellationToken`. That reasoning did not survive contact with how
+    // HttpClient actually behaves (round 2's correction): HttpClient does NOT hand a
+    // DelegatingHandler the caller's own token — it links the caller's token WITH HttpClient.Timeout
+    // into ONE token before this handler ever sees it. So a cancelled `cancellationToken` parameter
+    // is, from in here, indistinguishable from HttpClient.Timeout elapsing — the single most valuable
+    // bad-proxy signal this SDK carries ("the proxy accepted the connection and went silent"), and
+    // round 1's skip-on-any-cancellation silently swallowed exactly that signal: no policy-engine
+    // event, no local quarantine, a dead proxy kept getting leased.
+    //
+    // The CURRENT contract this test pins: this shape — a cancelled token, no ShutdownToken
+    // configured — is reported as Timeout, not skipped and not Failure. Still rethrown unchanged
+    // either way: this handler observes, it never changes control flow. (The one cancellation still
+    // treated as "not the proxy's fault, don't report" is a fired ShutdownToken specifically — see
+    // the next two tests below.)
     [Fact]
     public async Task SendAsync_Should_Report_Timeout_For_A_Cancellation_Shaped_The_Way_HttpClient_Actually_Produces_One()
     {
