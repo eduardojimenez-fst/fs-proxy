@@ -165,6 +165,16 @@ public sealed class FileSnapshotCache : IProxySnapshotCache
     /// (rather than sanitizing) sidesteps both problems at once: no key character needs escaping,
     /// and no two distinct keys can ever collide on the same file.
     /// </summary>
+    /// <remarks>
+    /// The file name suffix is <c>.fsproxy-snapshot.json</c>, not a bare <c>.json</c> — deliberately,
+    /// so that a single `.gitignore` glob (`*.fsproxy-snapshot.json`) can actually match this cache's
+    /// output, and so an operator staring at the cache directory can tell what these files are without
+    /// opening one. This is an internal, TTL'd runtime cache format with no back-compat obligation:
+    /// changing the suffix here does not need to preserve any pre-existing on-disk file, since a
+    /// missing/unrecognized file degrades to "no cache" exactly like a corrupt one (see <see cref="Read"/>).
+    /// The hash itself still provides uniqueness and collision-freedom; the fixed suffix is purely
+    /// cosmetic/discoverable on top of it.
+    /// </remarks>
     private string PathFor(string key)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(key);
@@ -175,7 +185,7 @@ public sealed class FileSnapshotCache : IProxySnapshotCache
         using SHA256 sha256 = SHA256.Create();
         byte[] hash = sha256.ComputeHash(bytes);
 #endif
-        return Path.Combine(_directory, ToHex(hash) + ".json");
+        return Path.Combine(_directory, ToHex(hash) + ".fsproxy-snapshot.json");
     }
 
     private static string ToHex(byte[] bytes)

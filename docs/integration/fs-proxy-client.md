@@ -193,12 +193,11 @@ strictly better than that). What is required of the directory you point it at:
 
 - It must be a runtime/data directory the scraper's own account can write to — never colocated with
   `appsettings.json`/`webscraper.json`, and never a path under source control.
-- `FileSnapshotCache` names each file after a SHA-256 hash of its cache key (e.g. `3f2a…c1.json`), not
-  a fixed suffix — so a single glob line in `.gitignore` cannot reliably target its output by filename.
-  This repo's own `.gitignore` carries a `*.fsproxy-snapshot.json` pattern as a defense-in-depth
-  backstop, but the real safety net is dedicating an **entire directory** to this cache (as in the
-  sample above) and excluding that whole directory in the consuming repository's own `.gitignore` —
-  do not rely on the filename pattern alone.
+- `FileSnapshotCache` names each file `<sha-256-hex>.fsproxy-snapshot.json` — a SHA-256 hash of its
+  cache key for uniqueness, plus a fixed, self-identifying suffix so an operator staring at the cache
+  directory can tell what these files are without opening one. This repo's own `.gitignore` carries a
+  matching `*.fsproxy-snapshot.json` pattern; add the same line (or exclude the whole directory, which
+  also covers any future file this cache writes) to the consuming repository's own `.gitignore`.
 
 Notes:
 
@@ -276,6 +275,25 @@ list that `Resolve()` currently reads. An attachment-scrape sub-section becomes:
 ```
 
 — see §6 for why `Tender-Attachments` is two tags ANDed together, not one.
+
+**`Resolve()` must read `ProxyTags` with the same defensive pattern it already uses for `Proxies`, not
+by binding the sub-section over `root`.** Its own comment explains why: `section.GetSection(nameof(Proxies)).Get<List<ProxyInfo>>()`
+is deliberately read on its own, because the configuration binder **appends** to an already-populated
+`List<T>` instead of replacing it — binding the sub-section straight over `root` would concatenate the
+root pool with the dedicated one rather than overriding it. That hazard does not go away when the
+per-section override becomes tags instead of proxies; it is a property of *how* the sub-section is
+applied, not of what type is being read. Read `ProxyTags` the identical way:
+
+```csharp
+var sectionProxyTags = section.GetSection(nameof(ProxyTags)).Get<string[]>();
+```
+
+and use it in place of `sectionProxies` in the fallback/override logic below it — never
+`section.Get<WebScraperSettings>()` or `section.Bind(root)` for this value. Skipping this is exactly
+the kind of trap this guide exists to prevent: an implementer who instead binds the sub-section over
+`root` gets a `WebScraper` that silently asks for the *union* of the root tag set and the sub-section's
+tags. Under this SDK's AND semantics that resolves to *fewer* proxies than either set alone — often
+none — and nothing about that failure mode points back at the config binder as the cause.
 
 Side effect worth calling out to whoever reviews this in TAG: `webscraper.json` stops carrying
 BrightData/WebShare credentials in plaintext. The only secret left in that file's neighborhood is the
@@ -387,10 +405,11 @@ catch (TaskCanceledException ex) when (ex.InnerException is TimeoutException)
 
 As read on 2026-09-15, the fourteen `RenewProxy()` calls sit at (approximately) lines 202, 214, 760,
 772, 855, 899, 911, 975, 1028, 1040, 1086, 1098, 1127, and 1139, across `CatchHttpExceptionFor<T>`,
-`GetByteAsync`, `GetByteAsyncV2`, `GetStringAsync`, `PostByteAsync`, and both `PostStringAsync`
-overloads. Most of these methods catch both exception shapes — `HttpRequestException` and the
-timed-out flavor of `TaskCanceledException` — giving twelve of the fourteen sites as six matched
-pairs; `GetByteAsyncV2` (line 855) and `PostByteAsync` (line 975) each catch only
+`GetByteAsync`, `GetByteAsyncV2`, `GetStringAsync`, `PostByteAsync`, and all three `PostStringAsync`
+overloads (`WebScraper.cs:982`, `:1045`, `:1104`). Most of these methods catch both exception
+shapes — `HttpRequestException` and the timed-out flavor of `TaskCanceledException` — giving twelve
+of the fourteen sites as six matched pairs; `GetByteAsyncV2` (line 855) and `PostByteAsync` (line
+975) each catch only
 `HttpRequestException`, with no separate timeout arm to touch. That asymmetry is fine — it means two
 sites, not fourteen, get only the `HttpRequestException` half of the change below. Every
 `HttpRequestException` catch gets the same one-line swap, and every `TaskCanceledException`-timeout
