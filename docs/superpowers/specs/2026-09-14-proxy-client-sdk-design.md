@@ -408,6 +408,23 @@ Phase 1 is independent and mergeable on its own. Phases 3 and 4 run in parallel.
 - **Slugifying `source` tag values** (see §5.3).
 - **Merging local attachment reputation with the server-side policy engine** (see §6).
 - A non-.NET consumer would revisit the forward-proxy sidecar approach.
+- **`FsProxyRotationHandler` terminates the HTTP pipeline** (decision, 2026-09-15). Because
+  `HttpClientHandler.Proxy` is per-handler rather than per-request, the level-2 handler keeps a
+  bounded cache of `HttpMessageInvoker` keyed by proxy id and sends through it directly instead of
+  calling `base.SendAsync`. The consequence: every `DelegatingHandler` registered after
+  `AddFsProxyRotation` is skipped whenever a proxy is leased — Polly retry and circuit-breaker
+  handlers, correlation-id handlers, and `IHttpClientFactory`'s own innermost
+  `LoggingHttpMessageHandler`, whose request/response/elapsed logs therefore disappear for proxied
+  requests.
+  A pipeline-preserving alternative exists and should be adopted: keep the rotation handler a true
+  `DelegatingHandler` that stashes the leased endpoint on `request.Options` (net10) /
+  `request.Properties` (netstandard2.0), calls `base.SendAsync`, then classifies and reports; and
+  move the per-proxy invoker cache into a terminal handler installed via
+  `ConfigurePrimaryHttpMessageHandler`. Both target frameworks support a per-request property bag,
+  so the cache moves rather than disappears and the whole chain keeps running.
+  Deferred rather than done because level 2 is the convenience path for new code — the legacy fleet
+  uses levels 0 and 1 — and the trade-off is disclosed in the type's XML doc, so it reaches
+  IntelliSense before it bites anyone.
 - **Long-batch timeout amplification.** The batch handler loops `EvaluateAsync` over up to 200
   distinct proxies inline and sequentially; each is ~4 DB round-trips, and an
   `AutoDisableAndRenew` profile additionally makes a synchronous outbound HTTP call to the
