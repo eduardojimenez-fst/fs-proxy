@@ -18,7 +18,6 @@
     <!-- Directory.Build.targets turns on IncludeSymbols + snupkg for every packable project.
          A folder feed serves .nupkg only, so a .snupkg there is dead weight and gives no
          step-into debugging. Embedding the PDB in the DLL does. -->
-    <IncludeSymbols>false</IncludeSymbols>
     <DebugType>embedded</DebugType>
     <EmbedAllSources>true</EmbedAllSources>
 
@@ -33,5 +32,25 @@
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
     <PackageReference Include="System.Text.Json" />
   </ItemGroup>
+
+  <!--
+    Directory.Build.targets sets IncludeSymbols=true for every packable project, and it is imported
+    after this file — so a PropertyGroup here cannot win. Property assignments inside a Target run at
+    execution time, after all evaluation, which is why this has to be a Target rather than a property.
+
+    Must run BeforeTargets="GenerateNuspec", not "Pack": the NuGet SDK's Pack target only
+    DependsOnTargets its way to GenerateNuspec, and GenerateNuspec's own body is what invokes
+    PackTask with IncludeSymbols="$(IncludeSymbols)" — the actual snupkg decision. DependsOnTargets
+    of Pack (GenerateNuspec included) run before any BeforeTargets="Pack" hook, so that hook lands
+    too late; confirmed empirically (a .snupkg still came out).
+
+    We want it off because this package ships to a folder feed, which serves .nupkg only. With
+    DebugType=embedded the PDB is already inside the DLL, so a .snupkg would carry nothing anyway.
+  -->
+  <Target Name="DisableSymbolPackage" BeforeTargets="GenerateNuspec">
+    <PropertyGroup>
+      <IncludeSymbols>false</IncludeSymbols>
+    </PropertyGroup>
+  </Target>
 
 </Project>
