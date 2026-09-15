@@ -202,7 +202,7 @@ Design decisions:
 1. **No client timestamp.** `ProxyUsageEvent.Create` stamps `OccurredAtUtc = DateTime.UtcNow` internally and accepts no external value. With policy windows in minutes and a 10 s flush, server time is sufficient. Accepting client timestamps invites clock skew and manipulation for no benefit.
 2. **One policy evaluation per distinct `proxyId`, not per event.** This is the entire point of batching: 200 events across 20 proxies drop from 200 evaluations to 20. Inserts go in a single `SaveChangesAsync`.
 3. **Partial acceptance.** An event whose `proxyId` no longer exists (retired between request and flush) is discarded and the batch proceeds. Returning 404 for the whole batch would make the client retry forever. Response: `200 { accepted, rejected[] }`.
-4. **Idempotency deferred.** `.WithIdempotency()` exists in BuildingBlocks, but its cache key is tenant-scoped while this consumer authenticates by API key against global entities — it would need verification that a tenant resolves. The damage from a duplicated batch is bounded: it inflates the failure count of proxies that were already failing. Tracked as follow-up.
+4. **Idempotency deferred.** `.WithIdempotency()` exists in BuildingBlocks, but its cache key is tenant-scoped while this consumer authenticates by API key against global entities — it would need verification that a tenant resolves. The damage from a duplicated batch is bounded: it inflates the failure count of proxies that were already failing. Tracked as follow-up. See also the "Long-batch timeout amplification" follow-up below: a slow batch makes a client-side timeout-and-retry more likely, which turns this bounded, unlikely-accident duplication into a predictable one. Phase 2 must not encode a blind retry.
 5. **Batch cap: 200 events**, enforced by validator, consistent with the cap of 50 on `RequestProxies`.
 
 The existing per-event `/feedback` endpoint is **unchanged**, for simple consumers that do not want buffering.
@@ -386,3 +386,18 @@ Phase 1 is independent and mergeable on its own. Phases 3 and 4 run in parallel.
 - **Slugifying `source` tag values** (see §5.3).
 - **Merging local attachment reputation with the server-side policy engine** (see §6).
 - A non-.NET consumer would revisit the forward-proxy sidecar approach.
+- **Long-batch timeout amplification.** The batch handler loops `EvaluateAsync` over up to 200
+  distinct proxies inline and sequentially; each is ~4 DB round-trips, and an
+  `AutoDisableAndRenew` profile additionally makes a synchronous outbound HTTP call to the
+  provider via `IProxyRenewalService.TriggerAsync`. Total work is no worse than the same events
+  sent one at a time, but it is now concentrated behind a single request timeout. Combined with
+  the deliberate absence of idempotency (§4 decision 4), a slow batch → client timeout → retry →
+  duplicate inserts → inflated failure counts → more renewals → slower still. §4 decision 4
+  reasons about duplication as an unlikely accident; this makes it a predictable consequence.
+  Cheapest mitigations: cap *distinct proxies* per batch rather than only events; move policy
+  evaluation to a Hangfire job; or bound the loop with a budget. Phase 2 must not encode a blind
+  retry (cross-referenced from §4).
+- **`ProxyUsageEvents` retention.** No pruning job exists anywhere in the module, and this branch
+  exists specifically to raise that table's write rate by an order of magnitude. The policy query
+  stays fast via its index, so this is a storage and backup-window concern, not correctness — but
+  it is new, and a decision is needed before phase 3.
