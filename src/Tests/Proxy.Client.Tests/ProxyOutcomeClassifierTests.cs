@@ -126,12 +126,12 @@ public sealed class ProxyOutcomeClassifierTests
         tcpListener.Stop();
 
         var listener = new HttpListener();
-        listener.Prefixes.Add($"http://127.0.0.1:{freePort}/");
+        listener.Prefixes.Add($"http://localhost:{freePort}/");
 
         try
         {
             listener.Start();
-            var uri = new Uri($"http://127.0.0.1:{freePort}/test");
+            var uri = new Uri($"http://localhost:{freePort}/test");
 
             var listenerTask = Task.Run(async () =>
             {
