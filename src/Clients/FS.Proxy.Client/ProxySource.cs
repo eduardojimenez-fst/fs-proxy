@@ -61,7 +61,7 @@ namespace FSH.Proxy.Client;
 /// learns anything happened.
 /// </para>
 /// </remarks>
-public sealed class ProxySource : IProxySource, IAsyncDisposable
+public sealed class ProxySource : IProxySource, IAsyncDisposable, IDisposable
 {
     /// <summary>
     /// Floor under a reactive refresh's debounce, per pool. Long enough that a scraper looping tightly
@@ -82,6 +82,9 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
     private readonly object _feedbackTimerGate = new();
     private Timer? _feedbackTimer;
     private int _disposed;
+
+    /// <summary>0/1 gate around <see cref="MaybeTriggerSizeBasedFlush"/>'s dispatch — see its own remarks.</summary>
+    private int _sizeFlushDispatchGate;
 
 #if !NET
     // CA5394 below covers why plain Random is fine here; netstandard2.0 has no Random.Shared, so a
@@ -175,6 +178,25 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
     internal static void ResetInstanceForTests() => s_instance = null;
 
     /// <summary>
+    /// Synchronous shutdown for a Level-0 caller — a .NET Framework 4.8 scraper with no
+    /// <c>IHostApplicationLifetime</c>, no awaited <c>async Main</c>, and nothing else that would ever
+    /// reach <see cref="IAsyncDisposable.DisposeAsync"/> at the point its process actually exits.
+    /// Flushes any buffered feedback (bounded by the same disposal timeout <see cref="FeedbackBuffer"/>
+    /// always applies) and stops every refresh/feedback timer — exactly what
+    /// <see cref="DisposeAsync"/> does, reached through a call shape a synchronous shutdown path can
+    /// actually make. A no-op if <see cref="Instance"/> was never initialized. Call this once, at the
+    /// very end of the scraper's own shutdown path — see the integration guide's Level-0 section,
+    /// right beside <see cref="Initialize"/>. Safe to call more than once.
+    /// </summary>
+    public static void Shutdown()
+    {
+        if (s_instance is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Test-only: exposes a tag set's underlying refresh <see cref="Timer"/>, so a test can prove
     /// disposal actually stopped it — a disposed <see cref="Timer"/>'s <see cref="Timer.Change(int,int)"/>
     /// returns <see langword="false"/> instead of re-arming it, a deterministic, non-timing-based way
@@ -222,6 +244,44 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
         }
 
         _feedbackBuffer.Enqueue(proxyId, outcome, detail);
+        MaybeTriggerSizeBasedFlush();
+    }
+
+    /// <summary>
+    /// The design spec's §4 rule is "flush every 10s or <c>FeedbackBatchSize</c> events, whichever
+    /// comes first." <see cref="_feedbackTimer"/> already covers the first half; before this, nothing
+    /// covered the second — a scraper reporting well above the batch size between timer ticks would
+    /// simply accumulate past it and wait for the clock, contrary to the spec. Dispatched (never
+    /// awaited) exactly like <see cref="MaybeTriggerReactiveRefresh"/>, and gated the same way so many
+    /// concurrent <see cref="Report"/> calls crossing the threshold at once cannot each independently
+    /// dispatch their own flush — one dispatch drains the buffer for all of them.
+    /// </summary>
+    private void MaybeTriggerSizeBasedFlush()
+    {
+        if (_feedbackBuffer.QueuedCount < _options.FeedbackBatchSize)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _sizeFlushDispatchGate, 1, 0) != 0)
+        {
+            // Another Report call already dispatched a flush for this crossing; let it run.
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // FeedbackBuffer.FlushAsync never throws (see its own remarks) — nothing to catch
+                // here beyond releasing the gate on every exit path.
+                await _feedbackBuffer.FlushAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Volatile.Write(ref _sizeFlushDispatchGate, 0);
+            }
+        });
     }
 
     /// <inheritdoc />
@@ -300,7 +360,17 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
             return;
         }
 
-        _ = entry.Pool.RefreshAsync();
+        // Task.Run, not a bare call: RefreshAsync is an ordinary async method, and an async method's
+        // body runs SYNCHRONOUSLY on the calling thread up to its first incomplete await. On
+        // netstandard2.0, HttpClient.SendAsync's own synchronous prologue includes proxy
+        // auto-detection (WPAD), which can block for seconds on first use — calling RefreshAsync()
+        // directly would run that prologue right here, on GetProxies/Lease's own calling thread,
+        // which both types are documented and tested elsewhere as never doing. Task.Run moves the
+        // whole call, prologue included, onto a thread-pool thread, making that guarantee
+        // unconditional rather than merely true for the fake/mocked transports the existing tests
+        // exercise (whose Task is already pending at the first instant, so they exercise an empty
+        // prologue and would not catch a regression here).
+        _ = Task.Run(() => entry.Pool.RefreshAsync());
     }
 
     /// <summary>
@@ -523,6 +593,36 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
         await _feedbackBuffer.DisposeAsync().ConfigureAwait(false);
 
         _ownedHttpClient?.Dispose();
+    }
+
+    /// <summary>
+    /// The synchronous counterpart to <see cref="DisposeAsync"/> — see <see cref="Shutdown"/>, the
+    /// static entry point a DI-less Level-0 caller actually reaches this through. Every step here has
+    /// a synchronous form on both target frameworks (<see cref="Timer.Dispose()"/>,
+    /// <see cref="FeedbackBuffer.Dispose"/>'s own bounded, blocking final flush), so unlike
+    /// <see cref="DisposeAsync"/> there is no <c>#if NET</c> split to make here at all.
+    /// </summary>
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _feedbackTimer?.Dispose();
+        foreach (PoolEntry entry in _pools.Values)
+        {
+            entry.RefreshTimer?.Dispose();
+        }
+
+        // Performs the final, timeout-bounded flush — see FeedbackBuffer's own remarks. Already
+        // synchronous and already bounded by its own disposal timeout, so there is nothing async left
+        // to block on here.
+        _feedbackBuffer.Dispose();
+
+        _ownedHttpClient?.Dispose();
+
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>One tag set's pool, plus the mutable state <see cref="ProxySource"/> tracks alongside it.</summary>

@@ -45,6 +45,28 @@ public sealed class ProxySourceTests
         public DateTimeOffset Get() => Now;
     }
 
+    /// <summary>
+    /// Polls <paramref name="condition"/> until it is true or <paramref name="timeout"/> elapses. I11
+    /// dispatches the reactive refresh via <c>Task.Run</c> (fixing exactly the bug this SDK exists to
+    /// avoid — a synchronous prologue running on the calling thread), which means several existing
+    /// tests that used to observe the refresh complete synchronously (because the fake transport's
+    /// Task was already completed, so the whole call used to run to completion inline) now have to
+    /// wait for a genuinely asynchronous background dispatch instead.
+    /// </summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
     // 1. GetProxies returns the warmed pool's contents.
     [Fact]
     public async Task GetProxies_Should_Return_The_Warmed_Pools_Contents()
@@ -376,11 +398,199 @@ public sealed class ProxySourceTests
         stoppedForGood.ShouldBeTrue("a disposed timer must never fire again — this is what proves DisposeAsync actually stopped it.");
     }
 
+    // I5: a synchronous shutdown path for the legacy .NET Framework 4.8 scrapers, which have no
+    // async-shutdown hook to reach IAsyncDisposable.DisposeAsync from. Mirrors
+    // DisposeAsync_Should_Flush_Feedback_And_Stop_The_Refresh_Timer exactly, but through the
+    // synchronous Dispose() a 4.8 scraper's own shutdown path can actually call.
+    [Fact]
+    public async Task Dispose_Should_Flush_Feedback_And_Stop_The_Refresh_Timer_Synchronously()
+    {
+        var client = ClientReturning(Endpoints(2));
+        var options = Options();
+        options.Tags = ["country:cl"];
+        var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+        var proxyId = Guid.NewGuid();
+        source.Report(proxyId, ProxyOutcome.Failure, "dying scrape");
+
+        Timer? refreshTimer = source.GetRefreshTimerForTests(["country:cl"]);
+        refreshTimer.ShouldNotBeNull("WarmupAsync must have started the default pool's refresh timer.");
+
+        // Intentionally the SYNCHRONOUS Dispose() surface under test here (I5) — awaiting
+        // DisposeAsync() instead would defeat the entire point of this test.
+#pragma warning disable CA1849, S6966
+        source.Dispose();
+#pragma warning restore CA1849, S6966
+
+        _ = client.Received(1).RequestFeedbackAsync(
+            Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 1 && events[0].ProxyId == proxyId),
+            Arg.Any<CancellationToken>());
+
+        bool stoppedForGood;
+        try
+        {
+            stoppedForGood = !refreshTimer!.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+        catch (ObjectDisposedException)
+        {
+            stoppedForGood = true;
+        }
+
+        stoppedForGood.ShouldBeTrue("a disposed timer must never fire again — this is what proves Dispose() actually stopped it.");
+    }
+
+    // I5: the static entry point a Level-0 (.NET Framework 4.8, no DI) scraper actually calls from
+    // its own shutdown path — see the integration guide's Level-0 section. Must be reachable without
+    // ever going through IAsyncDisposable, and safe to call more than once. No WarmupAsync call here:
+    // the feedback queue is empty, so the disposal flush this exercises makes no HTTP call at all
+    // (FlushAsync returns before ever touching the transport) — this test stays fully offline, like
+    // Initialize_Then_Instance_Should_Return_The_Same_Configured_Source above.
+    [Fact]
+    public void Shutdown_Should_Dispose_The_Static_Instance_Without_Throwing_And_Be_Idempotent()
+    {
+        ProxySource.ResetInstanceForTests();
+        var options = Options();
+        options.Tags = ["country:cl"];
+        ProxySource.Initialize(options);
+        try
+        {
+            Should.NotThrow(() => ProxySource.Shutdown());
+            Should.NotThrow(() => ProxySource.Shutdown());
+        }
+        finally
+        {
+            ProxySource.ResetInstanceForTests();
+        }
+    }
+
+    // I5 companion: Shutdown() must be a no-op, not a throw, when Instance was never initialized — a
+    // scraper whose startup failed before Initialize ran should still be able to call its own
+    // shutdown path unconditionally.
+    [Fact]
+    public void Shutdown_Should_Be_A_NoOp_When_Instance_Was_Never_Initialized()
+    {
+        ProxySource.ResetInstanceForTests();
+
+        Should.NotThrow(() => ProxySource.Shutdown());
+    }
+
+    // I11: MaybeTriggerReactiveRefresh must not run the transport's own synchronous prologue (on
+    // .NET Framework, HttpClient.SendAsync's prologue includes proxy auto-detection/WPAD, which can
+    // block for seconds before ever reaching an await) on the CALLING thread — Lease/GetProxies are
+    // documented and tested elsewhere as doing no I/O at all, and a long synchronous prologue on the
+    // caller's own thread would violate that even though nothing is technically awaited yet.
+    // Simulates a slow synchronous prologue via NSubstitute's own callback, which runs synchronously
+    // the instant IProxyServiceClient.RequestAsync is invoked — exactly where a real transport's WPAD
+    // detection would run, and exactly what a direct (non-Task.Run) call to
+    // ProxyPool.RefreshAsync() would execute on the calling thread before ever reaching
+    // RefreshAsync's own first await.
+    [Fact]
+    public async Task Lease_Should_Not_Run_The_Transports_Synchronous_Prologue_On_The_Calling_Thread()
+    {
+        var initial = Endpoints(2);
+        var client = ClientReturning(initial);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        // Drop below the 50%-healthy threshold so the next Lease call dispatches a reactive refresh.
+        foreach (ProxyEndpoint endpoint in initial)
+        {
+            source.Report(endpoint.Id, ProxyOutcome.Failure);
+        }
+
+        using var slowPrologue = new ManualResetEventSlim(initialState: false);
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                // Simulates a slow SYNCHRONOUS prologue: this callback runs synchronously, on
+                // whatever thread invokes RequestAsync, before any Task is even returned.
+                slowPrologue.Wait(TimeSpan.FromSeconds(2));
+                return Task.FromResult<IReadOnlyList<ProxyEndpoint>>(Endpoints(2));
+            });
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _ = source.Lease("country:cl"); // dispatches the reactive refresh (HealthyCount is 0)
+        stopwatch.Stop();
+
+        stopwatch.Elapsed.ShouldBeLessThan(TimeSpan.FromMilliseconds(500),
+            "Lease must not run the reactive refresh's synchronous prologue on the calling thread.");
+
+        slowPrologue.Set();
+    }
+
+    // Missing size-based flush trigger: design spec §4 says "flush every 10s or FeedbackBatchSize
+    // events, whichever comes first." FeedbackFlushInterval is set to an hour here specifically so
+    // only the SIZE trigger could possibly make this pass within the test's own timeout.
+    [Fact]
+    public async Task Report_Should_Trigger_A_Flush_Once_The_Buffer_Reaches_FeedbackBatchSize()
+    {
+        var client = ClientReturning(Endpoints(1));
+        // NOTE: client.ReceivedCalls() (used elsewhere in this file) would already be non-empty
+        // BEFORE Report is even called — WarmupAsync above makes its own RequestAsync call — so
+        // polling on "any call happened" cannot distinguish that from the RequestFeedbackAsync call
+        // this test actually cares about. A dedicated signal avoids that trap.
+        var flushed = new TaskCompletionSource<int>();
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
+            {
+                flushed.TrySetResult(callInfo.Arg<IReadOnlyList<FeedbackItem>>().Count);
+                return Task.CompletedTask;
+            });
+        var options = Options();
+        options.Tags = ["country:cl"];
+        options.FeedbackBatchSize = 3;
+        options.FeedbackFlushInterval = TimeSpan.FromHours(1); // must not be what triggers this
+        var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+
+        // Fire-and-forget by design (Report never blocks) — wait on the signal with a bounded
+        // timeout instead of asserting instantly.
+        Task completed = await Task.WhenAny(flushed.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        completed.ShouldBe(flushed.Task, "reaching FeedbackBatchSize must trigger a flush without waiting for ProxySource's own timer.");
+        (await flushed.Task).ShouldBe(3);
+
+        await source.DisposeAsync();
+    }
+
+    // Companion: reporting fewer than FeedbackBatchSize events must NOT trigger a size-based flush —
+    // otherwise this would just be an unconditional "flush on every Report," defeating batching
+    // entirely.
+    [Fact]
+    public async Task Report_Below_FeedbackBatchSize_Should_Not_Trigger_A_Flush()
+    {
+        var client = ClientReturning(Endpoints(1));
+        var options = Options();
+        options.Tags = ["country:cl"];
+        options.FeedbackBatchSize = 3;
+        options.FeedbackFlushInterval = TimeSpan.FromHours(1);
+        var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+        source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+
+        // Give any (incorrect) fire-and-forget dispatch a fair chance to happen before asserting it did not.
+        await Task.Delay(200);
+
+        _ = client.DidNotReceive().RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
+
+        await source.DisposeAsync();
+    }
+
     // Extra: the reactive-refresh mechanism described in the type's remarks — HealthyCount == 0
     // (every proxy quarantined) must trigger a background refresh on the very next Lease/GetProxies
     // call, debounced so a caller spinning on an exhausted pool cannot turn every call into a fresh
-    // transport request. Deterministic: the fake transport's Task is already completed, so the
-    // dispatched refresh actually runs to completion before Lease returns — no sleep needed.
+    // transport request. I11: the dispatch now genuinely runs on a background thread (Task.Run), so
+    // this polls for it rather than assuming the old (pre-I11) synchronous-completion behavior a
+    // fake transport with an already-completed Task used to produce.
     [Fact]
     public async Task Lease_Should_Trigger_A_Debounced_Reactive_Refresh_When_The_Pool_Is_Exhausted()
     {
@@ -399,11 +609,17 @@ public sealed class ProxySourceTests
         }
 
         var refreshed = Endpoints(2);
+        int refreshCallCount = 0;
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>(refreshed));
+            .Returns(_ =>
+            {
+                Interlocked.Increment(ref refreshCallCount);
+                return Task.FromResult<IReadOnlyList<ProxyEndpoint>>(refreshed);
+            });
 
         // Triggers the reactive refresh (HealthyCount was 0 for the fully-quarantined initial set).
         _ = source.Lease("country:cl");
+        await WaitUntilAsync(() => Volatile.Read(ref refreshCallCount) >= 1, TimeSpan.FromSeconds(2));
 
         var seen = new HashSet<Guid>();
         for (int i = 0; i < 4; i++)
@@ -422,11 +638,14 @@ public sealed class ProxySourceTests
             source.Report(endpoint.Id, ProxyOutcome.Failure);
         }
         _ = source.Lease("country:cl");
+        await Task.Delay(200); // give a wrongly-dispatched refresh a fair chance to happen before asserting it did not
+        Volatile.Read(ref refreshCallCount).ShouldBe(1, "the debounce window has not elapsed yet.");
         _ = client.Received(2).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
 
         // Once the debounce window elapses, an exhausted pool triggers another refresh.
         clock.Now += TimeSpan.FromSeconds(16);
         _ = source.Lease("country:cl");
+        await WaitUntilAsync(() => Volatile.Read(ref refreshCallCount) >= 2, TimeSpan.FromSeconds(2));
         _ = client.Received(3).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
@@ -452,10 +671,19 @@ public sealed class ProxySourceTests
         }
 
         var refreshed = Endpoints(10);
+        int refreshCallCount = 0;
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>(refreshed));
+            .Returns(_ =>
+            {
+                Interlocked.Increment(ref refreshCallCount);
+                return Task.FromResult<IReadOnlyList<ProxyEndpoint>>(refreshed);
+            });
 
         _ = source.Lease("country:cl");
+
+        // I11: the reactive refresh now genuinely runs on a background thread — poll instead of
+        // asserting immediately.
+        await WaitUntilAsync(() => Volatile.Read(ref refreshCallCount) >= 1, TimeSpan.FromSeconds(2));
 
         // A second transport call (the reactive refresh) must have happened despite 4 of 10 still
         // being perfectly usable — proving the trigger is the 50%-of-PoolSize line, not "0 left."
