@@ -31,6 +31,32 @@ public sealed class ProxyEndpointTests
         endpoint.ToWebProxy().Credentials.ShouldBeNull();
     }
 
+    // Promoted ledger minor: ToWebProxy() only attaches credentials when Username is non-empty (see
+    // its own remarks), so a null-username/non-null-password endpoint would silently become an
+    // ANONYMOUS proxy — auth then fails, and the SDK reports Failure against a proxy whose only real
+    // problem is this endpoint's own invalid construction. Rejected at the source instead.
+    [Fact]
+    public void Constructor_Should_Reject_A_Password_With_No_Username()
+    {
+        Should.Throw<ArgumentException>(() => Sample(user: null, password: "s3cret"));
+    }
+
+    // Companion: an empty (not merely null) username with a password must be rejected the same way —
+    // ToWebProxy()'s own check is IsNullOrEmpty, not merely "is null".
+    [Fact]
+    public void Constructor_Should_Reject_A_Password_With_An_Empty_Username()
+    {
+        Should.Throw<ArgumentException>(() => Sample(user: string.Empty, password: "s3cret"));
+    }
+
+    // Companion: no username and no password is a legitimate, intentionally-anonymous proxy — must
+    // NOT be rejected.
+    [Fact]
+    public void Constructor_Should_Accept_No_Username_And_No_Password()
+    {
+        Should.NotThrow(() => Sample(user: null, password: null));
+    }
+
     [Theory]
     [InlineData(ProxyProtocol.Http, "http")]
     [InlineData(ProxyProtocol.Https, "https")]

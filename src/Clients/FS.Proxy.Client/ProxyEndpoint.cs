@@ -13,6 +13,21 @@ public sealed class ProxyEndpoint
     {
         if (string.IsNullOrWhiteSpace(host)) throw new ArgumentException("Host is required.", nameof(host));
 
+        // ToWebProxy() only attaches credentials when Username is non-empty (see its own remarks) —
+        // a null/empty username with a non-null password would silently produce an ANONYMOUS proxy.
+        // Auth then fails against a proxy that actually requires it, and the SDK reports Failure
+        // against a proxy whose only real problem is this endpoint's own invalid construction.
+        // Reachable via manual proxy creation on the server, so this is rejected here rather than
+        // left to surface as a confusing runtime auth failure two layers away.
+        if (string.IsNullOrEmpty(username) && !string.IsNullOrEmpty(password))
+        {
+            throw new ArgumentException(
+                "A password was supplied with no username. An anonymous proxy (no username) must " +
+                "not also carry a password — ToWebProxy() would silently drop it, producing an " +
+                "unauthenticated request against a proxy that expects credentials.",
+                nameof(password));
+        }
+
         Id = id;
         Host = host.Trim();
         Port = port;
