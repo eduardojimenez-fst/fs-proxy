@@ -20,31 +20,45 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// The name of the <see cref="HttpClient"/> (registered via <see cref="IHttpClientFactory"/>)
     /// that <see cref="IProxySource"/>'s own transport — <see cref="ProxyServiceClient"/> — uses to
-    /// talk to the Proxy Management Service. Deliberately routed through
-    /// <see cref="IHttpClientFactory"/> rather than <see cref="ProxySource"/>'s own
-    /// self-constructed-<see cref="HttpClient"/> constructor overload: a long-lived DI-hosted
-    /// process is exactly the scenario <see cref="IHttpClientFactory"/> exists for (pooled, recycled
-    /// handlers; no socket exhaustion from a single owned <see cref="HttpClient"/> living for the
-    /// process's whole lifetime — though here it does live that long either way, since
-    /// <see cref="IProxySource"/> itself is a singleton).
+    /// talk to the Proxy Management Service.
     /// </summary>
+    /// <remarks>
+    /// Routed through <see cref="IHttpClientFactory"/> rather than <see cref="ProxySource"/>'s own
+    /// self-constructed-<see cref="HttpClient"/> constructor overload — but NOT for the usual "pooled,
+    /// recycled handlers" reason <c>IHttpClientFactory</c> is normally reached for. <see cref="IProxySource"/>
+    /// is registered as a singleton, so the factory delegate that calls <c>CreateClient(TransportClientName)</c>
+    /// runs exactly once, at that singleton's construction, and the resulting <see cref="HttpClient"/> is
+    /// then captured and reused for the whole process's lifetime — functionally identical to a plain
+    /// <c>new HttpClient()</c> in that specific respect; no per-call handler rotation ever actually
+    /// happens here. The real reason to go through <c>IHttpClientFactory</c> anyway: it puts this SDK's
+    /// own outbound calls to the Proxy Management Service on the same named-client configuration surface
+    /// as every other outbound call in the host, so a consumer can attach logging, a Polly resilience
+    /// policy, or a custom primary handler to <see cref="TransportClientName"/> via the ordinary
+    /// <c>services.AddHttpClient(TransportClientName).Configure...</c> calls — instead of this transport
+    /// being an invisible, unconfigurable <c>HttpClient</c> living entirely outside the DI container's
+    /// view.
+    /// </remarks>
     private const string TransportClientName = "FsProxyClient.Transport";
 
     /// <summary>
-    /// Binds a <see cref="ProxyClientOptions"/> from <paramref name="section"/> and registers a
-    /// singleton <see cref="IProxySource"/> built from it. Registers nothing under
-    /// <see cref="ProxyClientOptions"/>'s own type — this is a one-shot bind at startup, not an
-    /// <c>IOptionsMonitor</c>-style reloadable registration, matching <see cref="ProxyClientOptions"/>'s
-    /// own "constructible by hand" design (see its remarks): a net10 host gets configuration binding
-    /// as a convenience, never a requirement the type itself depends on.
+    /// Binds a <see cref="ProxyClientOptions"/> from <paramref name="section"/> and registers both that
+    /// bound instance and a singleton <see cref="IProxySource"/> built from it.
     /// </summary>
     /// <remarks>
+    /// The bound <see cref="ProxyClientOptions"/> is registered as a plain singleton instance — NOT as
+    /// <c>IOptions&lt;ProxyClientOptions&gt;</c> or an <c>IOptionsMonitor</c>-style reloadable
+    /// registration. This is a one-shot bind at startup, matching <see cref="ProxyClientOptions"/>'s own
+    /// "constructible by hand" design (see its remarks): a net10 host gets configuration binding as a
+    /// convenience, never a requirement the type itself depends on, and there is no live-reload story
+    /// here to lose by skipping <c>IOptions</c>.
+    /// <para>
     /// The returned <see cref="IProxySource"/> is a <see cref="ProxySource"/> — an
     /// <see cref="IAsyncDisposable"/> — registered through a factory delegate, so the container owns
     /// and disposes it (flushing pending feedback, stopping every refresh timer) when the host shuts
     /// down. Callers wanting <see cref="IProxySource.WarmupAsync"/> run before the first request still
     /// call it themselves (e.g. from a hosted service) — this method only wires the DI graph, it does
     /// not start scraping.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddFsProxyClient(this IServiceCollection services, IConfiguration section)
     {

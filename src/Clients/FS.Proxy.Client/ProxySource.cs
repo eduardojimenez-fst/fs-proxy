@@ -102,7 +102,14 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
     {
     }
 
-    /// <summary>Test seam: injects a fake transport (and, optionally, a fake clock) instead of a real <see cref="HttpClient"/>.</summary>
+    /// <summary>
+    /// Injects a caller-supplied <see cref="IProxyServiceClient"/> (and, optionally, a fake clock)
+    /// instead of building an owned <see cref="HttpClient"/>. Originally a test-only seam; also now the
+    /// production call site the net10 DI extensions use (<c>ServiceCollectionExtensions.AddFsProxyClient</c>)
+    /// to hand this type an <see cref="IProxyServiceClient"/> built from an <c>IHttpClientFactory</c>-managed
+    /// <see cref="HttpClient"/> rather than one this instance would otherwise own and have to dispose
+    /// itself.
+    /// </summary>
     internal ProxySource(ProxyClientOptions options, IProxyServiceClient client, Func<DateTimeOffset>? clock = null)
         : this(options, client, ownedHttpClient: null, clock)
     {

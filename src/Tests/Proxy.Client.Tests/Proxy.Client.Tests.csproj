@@ -15,6 +15,12 @@
 		<PackageReference Include="xunit" />
 		<PackageReference Include="xunit.runner.visualstudio" />
 		<PackageReference Include="coverlet.collector" />
+		<!-- For ServiceCollectionExtensionsTests' DI round-trip: FS.Proxy.Client's own net10-only
+		     PackageReferences to these are Condition-scoped and do not flow transitively, so this test
+		     project needs its own explicit references to exercise AddFsProxyClient/AddFsProxyRotation. -->
+		<PackageReference Include="Microsoft.Extensions.Configuration" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+		<PackageReference Include="Microsoft.Extensions.Http" />
 	</ItemGroup>
 
 	<ItemGroup>
