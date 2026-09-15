@@ -473,6 +473,55 @@ public sealed class ProxyPoolTests
         pool.Endpoints.ShouldBeEmpty();
     }
 
+    // Fix round 1 (Important 3): Endpoints must filter out quarantined proxies, mirroring Next()'s own
+    // rule exactly — this is what makes ProxySource.Report's local quarantine visible through
+    // GetProxies, not just Lease. Without this, a Level-0 (.NET Framework 4.8) caller whose only
+    // surface is GetProxies would never see Report's local half do anything at all.
+    [Fact]
+    public async Task Endpoints_Should_Exclude_A_Quarantined_Proxy()
+    {
+        var endpoints = Endpoints(3);
+        var pool = await WarmedPool(endpoints);
+
+        pool.Quarantine(endpoints[0].Id);
+
+        pool.Endpoints.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Skip(1).Select(e => e.Id)).ShouldBeTrue();
+    }
+
+    // Companion: when EVERY proxy is quarantined, Endpoints must fall back to the whole set rather
+    // than an empty one — the same "a questionable proxy beats nothing at all" rule Next() already
+    // applies when every candidate it would otherwise skip is quarantined.
+    [Fact]
+    public async Task Endpoints_Should_Return_The_Full_Set_When_Every_Proxy_Is_Quarantined()
+    {
+        var endpoints = Endpoints(2);
+        var pool = await WarmedPool(endpoints);
+
+        foreach (ProxyEndpoint endpoint in endpoints)
+        {
+            pool.Quarantine(endpoint.Id);
+        }
+
+        pool.Endpoints.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue();
+    }
+
+    // Fix round 1 fold-in: Endpoints must not hand back something a caller can downcast to a mutable
+    // array/list and use to corrupt the live snapshot for every other reader. Task 6 spent a whole fix
+    // round enforcing this on the way IN to ProxySnapshot (ProxySnapshot_Should_Not_Be_Affected_By...
+    // above); this pins the same invariant on the way OUT, through the one member that hands the
+    // snapshot's contents out as more than one ProxyEndpoint at a time.
+    [Fact]
+    public async Task Endpoints_Should_Not_Be_Downcastable_To_A_Mutable_Collection()
+    {
+        var endpoints = Endpoints(3);
+        var pool = await WarmedPool(endpoints);
+
+        IReadOnlyList<ProxyEndpoint> result = pool.Endpoints;
+
+        (result is ProxyEndpoint[]).ShouldBeFalse("a caller must not be able to downcast this to the live snapshot's backing array.");
+        (result is List<ProxyEndpoint>).ShouldBeFalse("a caller must not be able to downcast this to a mutable list either.");
+    }
+
     // Fix round 2 (Important 4): a proxy's local quarantine must not survive it being retired
     // server-side. Without pruning, this id would sit in the quarantine dictionary for the rest of
     // the process's life once it leaves every future snapshot — and if the service ever reissues the

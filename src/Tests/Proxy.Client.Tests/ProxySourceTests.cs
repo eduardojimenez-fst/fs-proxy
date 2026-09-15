@@ -52,6 +52,7 @@ public sealed class ProxySourceTests
         var endpoints = Endpoints(3);
         var client = ClientReturning(endpoints);
         var options = Options();
+        options.PoolSize = 3; // fully healthy at 3/3 — keeps this test's own concern isolated from reactive refresh
         options.Tags = ["country:cl"];
         await using var source = new ProxySource(options, client);
 
@@ -61,29 +62,65 @@ public sealed class ProxySourceTests
         result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue();
     }
 
-    // 2. GetProxies performs no I/O: after warmup, a transport that throws on any call must not stop
-    // it from still returning the already-warmed contents. This is the deadlock-safety property the
-    // .NET Framework 4.8 scrapers (full of .Result) depend on.
+    // 2. GetProxies performs no I/O. Two complementary assertions, per fix round 1: a transport that
+    // THROWS is swallowed by ProxyPool.RefreshAsync's own catch-all, so a regression that made
+    // GetProxies dispatch (or even block on) a transport call could still pass a throw-only version of
+    // this test. DidNotReceive is what actually pins "no I/O" — it fails on a transport TOUCH, not
+    // merely a transport error.
     [Fact]
-    public async Task GetProxies_Should_Perform_No_IO_After_Warmup()
+    public async Task GetProxies_Should_Perform_No_IO_When_The_Pool_Is_Healthy()
     {
         var endpoints = Endpoints(2);
         var client = ClientReturning(endpoints);
         var options = Options();
+        options.PoolSize = 2; // HealthyCount(2) * 2 >= PoolSize(2): fully healthy, no reactive refresh
         options.Tags = ["country:cl"];
         await using var source = new ProxySource(options, client);
         await source.WarmupAsync();
+        client.ClearReceivedCalls();
 
-        // Every proxy in the just-warmed pool is healthy, so this call must not even consider a
-        // reactive refresh — the transport throwing here is the whole point of the test.
+        // Defense in depth: if GetProxies ever did touch the transport, this makes it obvious via an
+        // exception too — but DidNotReceive below is the assertion that actually proves the property.
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<IReadOnlyList<ProxyEndpoint>>(new InvalidOperationException("GetProxies must not call the transport.")));
-        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromException(new InvalidOperationException("GetProxies must not call the transport.")));
 
         IReadOnlyList<ProxyEndpoint> result = source.GetProxies("country:cl");
 
         result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue();
+        _ = client.DidNotReceive().RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // Fix round 1, Important 5: the property under test is that GetProxies never BLOCKS on I/O, which
+    // a throwing-transport test cannot demonstrate at all (nothing to block on if it throws instantly).
+    // Here the pool is deliberately dropped below 50% healthy so the very next GetProxies call
+    // dispatches a reactive refresh against a transport that never completes — proving the dispatch is
+    // genuinely fire-and-forget, not awaited or blocked upon.
+    [Fact]
+    public async Task GetProxies_Should_Return_Immediately_Even_When_A_Dispatched_Refresh_Never_Completes()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        // Drop below the 50%-healthy threshold so the next GetProxies call dispatches a reactive
+        // refresh — exactly the call this test needs to hang.
+        foreach (ProxyEndpoint endpoint in endpoints)
+        {
+            source.Report(endpoint.Id, ProxyOutcome.Failure);
+        }
+
+        var neverCompletes = new TaskCompletionSource<IReadOnlyList<ProxyEndpoint>>();
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(neverCompletes.Task);
+
+        Task<IReadOnlyList<ProxyEndpoint>> getProxiesTask = Task.Run(() => source.GetProxies("country:cl"));
+        Task firstCompleted = await Task.WhenAny(getProxiesTask, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        firstCompleted.ShouldBe(getProxiesTask, "GetProxies must return without waiting on a dispatched refresh, even one whose transport call never completes.");
     }
 
     // 3. Tag sets are normalized and order-insensitive: two calls with the same tags in different
@@ -95,6 +132,7 @@ public sealed class ProxySourceTests
         var endpoints = Endpoints(2);
         var client = ClientReturning(endpoints);
         var options = Options();
+        options.PoolSize = 2; // keeps this test's transport-call-count assertion isolated from reactive refresh
         options.Tags = ["country:cl", "entitytype:tender"];
         await using var source = new ProxySource(options, client);
         await source.WarmupAsync();
@@ -107,6 +145,45 @@ public sealed class ProxySourceTests
         _ = client.Received(1).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
+    // Fix round 1, Important 4: GetProxies()/Lease() with no arguments must fall back to
+    // ProxyClientOptions.Tags, not create a separate untagged pool.
+    [Fact]
+    public async Task GetProxies_With_No_Tags_Should_Fall_Back_To_The_Configured_Default_Tags()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies();
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue();
+        // Must have hit the already-warmed default pool, not created a second, untagged one.
+        _ = client.Received(1).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // Companion to the above: Lease() shares the exact same EffectiveTags fallback.
+    [Fact]
+    public async Task Lease_With_No_Tags_Should_Fall_Back_To_The_Configured_Default_Tags()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        ProxyEndpoint? result = source.Lease();
+
+        result.ShouldNotBeNull();
+        endpoints.Select(e => e.Id).ShouldContain(result!.Id);
+        _ = client.Received(1).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
     // 4. Report with a negative outcome quarantines the proxy locally so Lease stops returning it —
     // without waiting for the server.
     [Fact]
@@ -115,6 +192,7 @@ public sealed class ProxySourceTests
         var endpoints = Endpoints(3);
         var client = ClientReturning(endpoints);
         var options = Options();
+        options.PoolSize = 3;
         options.Tags = ["country:cl"];
         await using var source = new ProxySource(options, client);
         await source.WarmupAsync();
@@ -128,6 +206,51 @@ public sealed class ProxySourceTests
         }
     }
 
+    // Fix round 1, Important 3: Report's local quarantine must also be visible through GetProxies, not
+    // only Lease — a Level-0 (.NET Framework 4.8) caller's only surface is GetProxies, and
+    // IProxySource.Report is explicitly documented to protect "this process's own next
+    // Lease/GetProxies call." Reports one of three and asserts the other two still come back.
+    [Fact]
+    public async Task GetProxies_Should_Not_Return_A_Locally_Quarantined_Proxy()
+    {
+        var endpoints = Endpoints(3);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 3;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        source.Report(endpoints[0].Id, ProxyOutcome.Failure);
+
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies("country:cl");
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Skip(1).Select(e => e.Id)).ShouldBeTrue();
+    }
+
+    // Companion: if EVERY proxy is quarantined, GetProxies must hand back the full set rather than an
+    // empty one — the same "a questionable proxy beats nothing at all" fallback Next() already applies.
+    [Fact]
+    public async Task GetProxies_Should_Return_The_Full_Set_When_Every_Proxy_Is_Quarantined()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        foreach (ProxyEndpoint endpoint in endpoints)
+        {
+            source.Report(endpoint.Id, ProxyOutcome.Failure);
+        }
+
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies("country:cl");
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue();
+    }
+
     // Extra, not one of the 7: a Success report must NOT quarantine — quarantining a proxy that just
     // worked would make no sense, and nothing above proves Report's quarantine is conditional on a
     // negative outcome rather than unconditional.
@@ -137,6 +260,7 @@ public sealed class ProxySourceTests
         var endpoints = Endpoints(2);
         var client = ClientReturning(endpoints);
         var options = Options();
+        options.PoolSize = 2;
         options.Tags = ["country:cl"];
         await using var source = new ProxySource(options, client);
         await source.WarmupAsync();
@@ -234,12 +358,22 @@ public sealed class ProxySourceTests
             Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 1 && events[0].ProxyId == proxyId),
             Arg.Any<CancellationToken>());
 
-        // A disposed System.Threading.Timer's Change returns false rather than re-arming (verified
-        // empirically against this runtime's System.Threading.Timer — it does not throw here, unlike
-        // some other BCL disposables) — the deterministic, non-timing-based way to prove the timer was
-        // actually stopped rather than merely "not going to fire again soon by coincidence."
-        bool rearmed = refreshTimer!.Change(Timeout.Infinite, Timeout.Infinite);
-        rearmed.ShouldBeFalse("a disposed timer must refuse to be re-armed — this is what proves DisposeAsync actually stopped it.");
+        // A disposed timer must never fire again. Fix round 1 fold-in: re-arming a disposed timer is
+        // platform-divergent — net10 reports failure with a false return (verified empirically),
+        // while .NET Framework raises ObjectDisposedException for the identical call. This assertion
+        // accepts either outcome as proof of "stopped," since this test suite only runs on net10 but
+        // the production code behind it (and this exact call shape) also ships on netstandard2.0.
+        bool stoppedForGood;
+        try
+        {
+            stoppedForGood = !refreshTimer!.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+        catch (ObjectDisposedException)
+        {
+            stoppedForGood = true;
+        }
+
+        stoppedForGood.ShouldBeTrue("a disposed timer must never fire again — this is what proves DisposeAsync actually stopped it.");
     }
 
     // Extra: the reactive-refresh mechanism described in the type's remarks — HealthyCount == 0
@@ -253,6 +387,7 @@ public sealed class ProxySourceTests
         var initial = Endpoints(2);
         var client = ClientReturning(initial);
         var options = Options();
+        options.PoolSize = 2; // so 0 healthy is unambiguously below half, and 2/2 healthy is unambiguously not
         options.Tags = ["country:cl"];
         var clock = new FakeClock();
         await using var source = new ProxySource(options, client, clock.Get);
@@ -293,6 +428,55 @@ public sealed class ProxySourceTests
         clock.Now += TimeSpan.FromSeconds(16);
         _ = source.Lease("country:cl");
         _ = client.Received(3).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // Fix round 1, Important 2: spec's threshold is 50% of PoolSize, not "every proxy gone." Warms a
+    // pool of 10 and quarantines 6 (leaving 4/10 = 40% healthy, still short of the 5/10 the formula
+    // needs) to prove the refresh fires well before full exhaustion.
+    [Fact]
+    public async Task Lease_Should_Trigger_A_Reactive_Refresh_At_Forty_Percent_Healthy_Without_Full_Exhaustion()
+    {
+        var initial = Endpoints(10);
+        var client = ClientReturning(initial);
+        var options = Options();
+        options.PoolSize = 10;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        // Quarantine 6 of 10: HealthyCount == 4, and 4 * 2 (== 8) < PoolSize (== 10) — below the 50%
+        // line, even though 4 proxies are still technically usable and none of them are exhausted.
+        foreach (ProxyEndpoint endpoint in initial.Take(6))
+        {
+            source.Report(endpoint.Id, ProxyOutcome.Failure);
+        }
+
+        var refreshed = Endpoints(10);
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>(refreshed));
+
+        _ = source.Lease("country:cl");
+
+        // A second transport call (the reactive refresh) must have happened despite 4 of 10 still
+        // being perfectly usable — proving the trigger is the 50%-of-PoolSize line, not "0 left."
+        _ = client.Received(2).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // Fix round 1, Important 1: a tag set discovered purely through GetProxies (never explicitly
+    // warmed) must still get a standing refresh timer, not just the one-off reactive refresh that
+    // fills it initially — otherwise it only ever recovers by staying at or below 50% healthy long
+    // enough for another Lease/GetProxies call to happen to notice.
+    [Fact]
+    public async Task GetProxies_On_A_Never_Warmed_Tag_Set_Should_Start_Its_Refresh_Timer_Immediately()
+    {
+        var client = ClientReturning(Endpoints(2));
+        var options = Options();
+        await using var source = new ProxySource(options, client); // WarmupAsync is never called
+
+        _ = source.GetProxies("country:mx"); // a tag set this source has never seen before
+
+        Timer? timer = source.GetRefreshTimerForTests(["country:mx"]);
+        timer.ShouldNotBeNull("a pool discovered purely through GetProxies must start a standing refresh timer, not rely solely on reactive refresh.");
     }
 
     // Extra: the pure jitter calculation ProxySource.NextRefreshDelay wraps around a real Random —

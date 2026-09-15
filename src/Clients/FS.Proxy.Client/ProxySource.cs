@@ -38,16 +38,15 @@ namespace FSH.Proxy.Client;
 /// <c>ProxyClientOptions.FeedbackFlushInterval</c>.
 /// </para>
 /// <para>
-/// <b>Reactive refresh.</b> <see cref="ProxyPool.HealthyCount"/> reads <c>0</c> both when a pool's
-/// snapshot has gone stale and when every proxy in a fresh snapshot is quarantined — both are states a
-/// scheduled refresh (possibly minutes away) is too slow to react to. Every <see cref="GetProxies"/>/
-/// <see cref="Lease"/> call checks <c>HealthyCount</c> for the pool it just read and, if it is
-/// <c>0</c>, dispatches (never awaits) a <see cref="ProxyPool.RefreshAsync"/> call — debounced per pool
-/// so a scraper hammering an exhausted pool in a tight loop cannot turn this into a refresh storm
-/// against an already-struggling or already-empty tag set. This same mechanism is what fills a
-/// non-default tag set's pool the first time it is touched: <see cref="GetOrCreatePoolEntry"/> only
-/// ever constructs a <see cref="ProxyPool"/> (no I/O), so a brand-new pool starts with
-/// <c>HealthyCount == 0</c> exactly like an exhausted one, and gets the same reactive refresh.
+/// <b>Reactive refresh.</b> Every <see cref="GetProxies"/>/<see cref="Lease"/> call checks the pool it
+/// just read and, when <see cref="ProxyPool.HealthyCount"/> has fallen below half of
+/// <c>ProxyClientOptions.PoolSize</c> — the spec's own threshold, not merely "every proxy is gone" —
+/// dispatches (never awaits) a <see cref="ProxyPool.RefreshAsync"/> call, debounced per pool so a
+/// scraper hammering a degraded pool in a tight loop cannot turn this into a refresh storm. A stale
+/// snapshot and a snapshot with more than half its proxies quarantined both read as "below half
+/// healthy" the same way, and a brand-new, never-warmed pool (<c>HealthyCount == 0</c>) does too —
+/// see <see cref="GetOrCreatePoolEntry"/>'s own remarks for why a non-default tag set does not need a
+/// separate warmup path to get filled.
 /// </para>
 /// <para>
 /// <b><see cref="Report"/> does two things, on purpose.</b> A non-<see cref="ProxyOutcome.Success"/>
@@ -138,6 +137,11 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
         // service even for a caller that never calls WarmupAsync at all (a Level-0 scraper's
         // simplest possible integration is Initialize + GetProxies + Report, with no explicit
         // warmup step) — feedback would otherwise sit in the buffer until this source is disposed.
+        // This is also the point where `this` escapes to another thread (the timer's callback closes
+        // over it via OnFeedbackFlushTick): it must be the LAST statement in this constructor, since
+        // every field the callback can touch (_disposed, _feedbackBuffer) has to already be assigned
+        // by the time an instant first tick could possibly run. Any field added above this line is
+        // safe for the callback to read; one added below it would not be.
         EnsureFeedbackTimerStarted();
     }
 
@@ -175,7 +179,7 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
     /// <inheritdoc />
     public IReadOnlyList<ProxyEndpoint> GetProxies(params string[] tags)
     {
-        PoolEntry entry = GetOrCreatePoolEntry(tags ?? Array.Empty<string>());
+        PoolEntry entry = GetOrCreatePoolEntry(EffectiveTags(tags));
         MaybeTriggerReactiveRefresh(entry);
         return entry.Pool.Endpoints;
     }
@@ -183,10 +187,19 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
     /// <inheritdoc />
     public ProxyEndpoint? Lease(params string[] tags)
     {
-        PoolEntry entry = GetOrCreatePoolEntry(tags ?? Array.Empty<string>());
+        PoolEntry entry = GetOrCreatePoolEntry(EffectiveTags(tags));
         MaybeTriggerReactiveRefresh(entry);
         return entry.Pool.Next();
     }
+
+    /// <summary>
+    /// Falls back to <c>ProxyClientOptions.Tags</c> when the caller supplied none — mirroring what
+    /// <see cref="ProxyClientOptions.Tags"/> itself is documented to mean ("tags this client leases
+    /// against when none are passed explicitly"). Without this, <c>GetProxies()</c>/<c>Lease()</c>
+    /// with no arguments would create and lease from a separate, untagged pool instead of the
+    /// configured default — silently handing back proxies for the wrong country/entity type.
+    /// </summary>
+    private string[] EffectiveTags(string[]? tags) => tags is null || tags.Length == 0 ? _options.Tags : tags;
 
     /// <inheritdoc />
     public void Report(Guid proxyId, ProxyOutcome outcome, string? detail = null)
@@ -210,34 +223,58 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
         EnsureFeedbackTimerStarted();
         PoolEntry entry = GetOrCreatePoolEntry(_options.Tags);
         await entry.Pool.WarmupAsync(ct).ConfigureAwait(false);
-        StartRefreshTimer(entry);
     }
 
     /// <summary>
     /// Looks up (or, on first sight of this tag set, constructs) the <see cref="ProxyPool"/> for the
     /// normalized, sorted tag set — one pool per distinct tag set, per the type's remarks. Construction
-    /// alone performs no I/O: a newly-registered pool starts empty and is filled either by
-    /// <see cref="WarmupAsync"/> (the default tag set) or by the reactive refresh a subsequent
-    /// <see cref="GetProxies"/>/<see cref="Lease"/> call triggers for it (any other tag set).
+    /// alone performs no I/O, so this stays safe to call from <see cref="GetProxies"/>/<see cref="Lease"/>.
     /// </summary>
+    /// <remarks>
+    /// A brand-new pool's refresh timer is started right here, at creation — not only from
+    /// <see cref="WarmupAsync"/> — so that a tag set discovered purely through
+    /// <see cref="GetProxies"/>/<see cref="Lease"/> (never explicitly warmed) still gets periodic
+    /// refreshes going forward, not just the one-off reactive refresh <see cref="MaybeTriggerReactiveRefresh"/>
+    /// dispatches for it. Without this, spec's 60-120s-with-jitter refresh requirement would only ever
+    /// apply to the default tag set, and every other pool would depend entirely on staying at or above
+    /// half of <c>PoolSize</c> — recovering only when it happened to dip back below that and a caller
+    /// happened to call in again.
+    /// </remarks>
     private PoolEntry GetOrCreatePoolEntry(IReadOnlyList<string> tags)
     {
         string key = BuildKey(tags);
+        if (_pools.TryGetValue(key, out PoolEntry? existing))
+        {
+            return existing;
+        }
+
         // The same clock this source uses for its own debounce bookkeeping is threaded through to
         // every pool it creates, so a test-injected fake clock controls staleness/quarantine timing
         // consistently across the whole facade, not just the reactive-refresh debounce.
-        return _pools.GetOrAdd(key, _ => new PoolEntry(new ProxyPool(_client, _options, NormalizeTagList(tags), _clock)));
+        var candidate = new PoolEntry(new ProxyPool(_client, _options, NormalizeTagList(tags), _clock));
+        PoolEntry stored = _pools.GetOrAdd(key, candidate);
+        if (ReferenceEquals(stored, candidate))
+        {
+            // This call won the race to register the tag set: it alone starts the timer, so a race
+            // between two callers discovering the same brand-new tag set at once cannot start two.
+            StartRefreshTimer(stored);
+        }
+
+        return stored;
     }
 
     /// <summary>
     /// Dispatches (never awaits) a <see cref="ProxyPool.RefreshAsync"/> call for <paramref name="entry"/>
-    /// when its <see cref="ProxyPool.HealthyCount"/> reads <c>0</c>, debounced by
-    /// <see cref="ReactiveRefreshDebounce"/> so a caller spinning on an exhausted pool cannot turn this
+    /// when its <see cref="ProxyPool.HealthyCount"/> has fallen below half of <c>ProxyClientOptions.PoolSize</c>
+    /// (the spec's own threshold — not merely "every proxy is gone"), debounced by
+    /// <see cref="ReactiveRefreshDebounce"/> so a caller spinning on a degraded pool cannot turn this
     /// into a refresh storm. See the type's remarks ("Reactive refresh").
     /// </summary>
     private void MaybeTriggerReactiveRefresh(PoolEntry entry)
     {
-        if (entry.Pool.HealthyCount > 0)
+        // HealthyCount * 2 >= PoolSize, rearranged to avoid a division — naturally covers HealthyCount
+        // == 0 as the extreme case, but does not wait for it: 26 of 50 quarantined already qualifies.
+        if (entry.Pool.HealthyCount * 2 >= _options.PoolSize)
         {
             return;
         }
@@ -260,8 +297,10 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
     }
 
     /// <summary>
-    /// Starts <paramref name="entry"/>'s own jittered refresh timer, unless it already has one (e.g.
-    /// <see cref="WarmupAsync"/> called more than once for the same tag set).
+    /// Starts <paramref name="entry"/>'s own jittered refresh timer, unless it already has one. Called
+    /// once, from the single call site in <see cref="GetOrCreatePoolEntry"/> that wins the race to
+    /// register a brand-new tag set — the guard below is a defensive backstop, not the primary
+    /// idempotency mechanism.
     /// </summary>
     private void StartRefreshTimer(PoolEntry entry)
     {
@@ -299,9 +338,26 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
         // mid-disposal.
         await entry.Pool.RefreshAsync().ConfigureAwait(false);
 
-        if (Volatile.Read(ref _disposed) == 0)
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        // The _disposed check above is check-then-act, not a lock: DisposeAsync can dispose this exact
+        // Timer between that read and the Change call below. On net10's System.Threading.Timer,
+        // Change on a disposed timer returns false; on .NET Framework's Timer (this SDK's other
+        // target, netstandard2.0), the same call throws ObjectDisposedException instead — a genuine,
+        // verified platform divergence, not a hypothetical one. Caught, not avoided: there is no
+        // "check disposed" that closes the race, so the only real fix is tolerating the outcome either
+        // platform can produce.
+        try
         {
             entry.RefreshTimer?.Change(NextRefreshDelay(), Timeout.InfiniteTimeSpan);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Lost the race to DisposeAsync between the check above and this call — nothing to do,
+            // the source is shutting down.
         }
     }
 
@@ -407,9 +463,22 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable
 
     private static (ProxyClientOptions Options, IProxyServiceClient Client, HttpClient OwnedHttpClient) CreateOwnedTransport(ProxyClientOptions options)
     {
+        // Validate BEFORE allocating the HttpClient this instance would otherwise own: the private
+        // constructor this feeds into also calls options.Validate(), but by then the HttpClient would
+        // already exist with nothing left ever able to dispose it — the constructor never finishes,
+        // so it never reaches _ownedHttpClient, and the exception unwinds past this factory with the
+        // handle already leaked. A null `options` still throws from here with the right parameter
+        // name, matching ProxyServiceClient's own guard.
+#if NET
+        ArgumentNullException.ThrowIfNull(options);
+#else
+#pragma warning disable CA1510
+        if (options is null) throw new ArgumentNullException(nameof(options));
+#pragma warning restore CA1510
+#endif
+        options.Validate();
+
         var httpClient = new HttpClient();
-        // ProxyServiceClient itself null-checks both arguments, so a null `options` still throws with
-        // the right parameter name from there rather than needing a duplicate guard here.
         var client = new ProxyServiceClient(httpClient, options);
         return (options, client, httpClient);
     }

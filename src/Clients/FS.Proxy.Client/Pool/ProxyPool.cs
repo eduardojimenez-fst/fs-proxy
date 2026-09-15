@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -124,11 +125,15 @@ public sealed class ProxyPool
     }
 
     /// <summary>
-    /// The current snapshot's proxies, or an empty list if the pool has never been warmed or the
-    /// snapshot is past <see cref="IsStale"/> — the exact same degrade rule <see cref="Next"/> and
-    /// <see cref="HealthyCount"/> already apply. Read-only, no locking, no I/O.
+    /// The current snapshot's proxies, minus anything currently quarantined — an empty list if the
+    /// pool has never been warmed or the snapshot is past <see cref="IsStale"/>. Mirrors
+    /// <see cref="Next"/>'s exact degrade rules: a stale snapshot yields nothing, and if
+    /// <em>every</em> proxy is quarantined, the quarantine is ignored and the whole set comes back
+    /// rather than an empty list — a questionable proxy beats handing the caller nothing at all.
+    /// Read-only, no locking, no I/O.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Internal, not public: this type's Produces surface (<see cref="WarmupAsync"/>,
     /// <see cref="RefreshAsync"/>, <see cref="Next"/>, <see cref="Quarantine"/>,
     /// <see cref="HealthyCount"/>, <see cref="IsStale"/>) has no member that hands back the whole
@@ -139,18 +144,42 @@ public sealed class ProxyPool
     /// have worked in principle (it visits every member exactly once per <c>PoolSize</c> calls) but
     /// would have mutated the shared rotation cursor as a side effect of what <c>GetProxies</c>
     /// documents as a pure read — this property avoids that entirely.
+    /// </para>
+    /// <para>
+    /// The quarantine filter matters here specifically because <c>GetProxies</c> is the only surface
+    /// a Level-0 (.NET Framework 4.8, no <see cref="Next"/>/<c>Lease</c>) caller ever touches:
+    /// <c>ProxySource.Report</c>'s local quarantine has to be visible through this property, or its
+    /// "stops offering it on this process's very next call" promise is simply false for that caller.
+    /// </para>
+    /// <para>
+    /// Always returns a wrapper the caller cannot downcast back to a mutable array/list: this is the
+    /// first member of this type that ever hands the snapshot's contents out as more than one
+    /// <see cref="ProxyEndpoint"/> at a time, so it is also the first place a caller could reach back
+    /// in and mutate the live snapshot out from under every other reader — exactly what
+    /// <see cref="ProxySnapshot"/>'s own "always defensively copied" constructor invariant exists to
+    /// prevent on the way in.
+    /// </para>
     /// </remarks>
     internal IReadOnlyList<ProxyEndpoint> Endpoints
     {
         get
         {
             ProxySnapshot snapshot = _snapshot;
-            if (_clock() - snapshot.FetchedAt > _options.StaleCeiling)
+            DateTimeOffset now = _clock();
+            if (now - snapshot.FetchedAt > _options.StaleCeiling)
             {
                 return Array.Empty<ProxyEndpoint>();
             }
 
-            return snapshot.Endpoints;
+            if (snapshot.Endpoints.Count == 0)
+            {
+                return snapshot.Endpoints;
+            }
+
+            List<ProxyEndpoint> healthy = snapshot.Endpoints.Where(endpoint => !IsQuarantined(endpoint.Id, now)).ToList();
+            return healthy.Count == 0
+                ? new ReadOnlyCollection<ProxyEndpoint>(snapshot.Endpoints.ToList())
+                : new ReadOnlyCollection<ProxyEndpoint>(healthy);
         }
     }
 
