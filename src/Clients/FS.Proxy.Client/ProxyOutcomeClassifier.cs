@@ -30,12 +30,16 @@ public static class ProxyOutcomeClassifier
         // The PROXY rejected us — it wanted credentials we did not supply or that were wrong.
         HttpStatusCode.ProxyAuthenticationRequired => ProxyOutcome.Failure,
 
-        // Something upstream timed out. Treated as a proxy-side stall.
-        HttpStatusCode.RequestTimeout => ProxyOutcome.Timeout,
-        HttpStatusCode.GatewayTimeout => ProxyOutcome.Timeout,
-
-        // Everything else — 2xx, 3xx, 404, 400, 500, 502, 503 — means the destination answered.
-        // The proxy did its job; the site's own problems are not the proxy's fault.
+        // Everything else — including 408 and 504 — means the destination answered, so the tunnel
+        // worked; the proxy did its job. 408 is the ORIGIN server's own response (it decided to
+        // declare a client-side idle timeout — nothing to do with the proxy in front of it); 504 is
+        // the destination's own gateway/reverse-proxy answering with an error status, exactly like
+        // 502/503. Deliberately NOT ProxyOutcome.Timeout despite the name: an overloaded origin
+        // emits 502/503/504 near-interchangeably, and treating 504 differently from its siblings
+        // would report the same bad afternoon as Success via one status and Timeout via another,
+        // quarantining every proxy that happens to touch it. See the design spec's §3
+        // classification table, which lists both explicitly so this reads as an intentional
+        // decision rather than an unremarked deviation.
         _ => ProxyOutcome.Success,
     };
 
@@ -74,7 +78,23 @@ public static class ProxyOutcomeClassifier
         switch (exception)
         {
             // HttpClient's timeout surfaces as a cancelled task whose inner is a TimeoutException.
-            // A cancellation WITHOUT that inner is our own shutdown — never blame a proxy for it.
+            // A cancellation WITHOUT that inner is ambiguous from inside this method alone: it can
+            // be the caller's own shutdown (not the proxy's fault) or a genuine, proxy-unrelated
+            // cancellation. This classifier has no access to the CancellationToken that triggered
+            // it, so it cannot make that distinction here and falls back to Failure as a
+            // conservative default. A caller that DOES hold the token (e.g.
+            // FsProxyRotationHandler.SendAsync) must check token.IsCancellationRequested itself and
+            // skip calling Report entirely for its own cancellation, rather than rely on this method
+            // to recognize it — see that method's own remarks.
+#if !NET
+            // netstandard2.0 (.NET Framework) divergence: HttpClient's timeout throws
+            // TaskCanceledException with NO inner TimeoutException on this target — that inner was
+            // only added by the BCL in .NET 5. Every HttpClient timeout on netstandard2.0 therefore
+            // falls into this same branch and classifies as Failure below, never Timeout. This is a
+            // known, accepted gap for this target, not something to paper over here: guessing (e.g.
+            // treating every parameterless cancellation as a timeout) would trade a known miss for a
+            // wrong guess elsewhere, which is worse. Tracked in the design spec's follow-ups.
+#endif
             case TaskCanceledException taskCanceled:
                 return taskCanceled.InnerException is TimeoutException ? ProxyOutcome.Timeout : ProxyOutcome.Failure;
 

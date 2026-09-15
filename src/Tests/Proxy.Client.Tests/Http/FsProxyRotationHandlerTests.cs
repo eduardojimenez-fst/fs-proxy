@@ -239,6 +239,32 @@ public sealed class FsProxyRotationHandlerTests
         source.Received(1).Report(proxy.Id, ProxyOutcome.Timeout, "timed out");
     }
 
+    // I1: a cooperative cancellation of the CALLER's own token (a graceful shutdown with this
+    // request still in flight is the common case) must not be reported at all — it is not the
+    // proxy's fault, and reporting Failure here would both quarantine a healthy proxy locally and
+    // emit a false negative signal to the policy engine on every such shutdown. Still rethrown
+    // unchanged: this handler observes, it never changes control flow.
+    // Note: test 5 above (SendAsync_Should_Report_Timeout_And_Rethrow_When_The_Send_Times_Out)
+    // already covers the companion case — a cancellation-shaped exception reported normally when the
+    // CALLER's own token (CancellationToken.None there) was never the one cancelled.
+    [Fact]
+    public async Task SendAsync_Should_Not_Report_When_The_Callers_Own_Token_Was_Cancelled()
+    {
+        ProxyEndpoint proxy = Endpoint();
+        IProxySource source = FakeSourceLeasing(proxy);
+        using var cts = new CancellationTokenSource();
+        var thrower = new ThrowingHandler(new OperationCanceledException("shutting down", cts.Token));
+        using var sut = new FsProxyRotationHandler(source, ["country:cl"], classifyResponse: null,
+            perProxyHandlerFactory: _ => thrower);
+        using var invoker = new HttpMessageInvoker(sut, disposeHandler: false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.test/page");
+        await cts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => invoker.SendAsync(request, cts.Token));
+
+        source.DidNotReceive().Report(Arg.Any<Guid>(), Arg.Any<ProxyOutcome>(), Arg.Any<string?>());
+    }
+
     // 6. A supplied classifyResponse returning Banned on a 200 wins over the status code — the
     // captcha-page case.
     [Fact]

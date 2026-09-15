@@ -310,6 +310,19 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
             }
             catch (Exception ex)
             {
+                // A cooperative cancellation of THIS call's own token — a graceful shutdown with
+                // requests still in flight is the common case — is not the proxy's fault: it never
+                // reached a stage where the proxy could have done anything wrong. Reporting Failure
+                // here would blame a perfectly healthy proxy and quarantine it locally on every such
+                // shutdown, for every in-flight request. ProxyOutcomeClassifier.FromException cannot
+                // make this distinction itself (it has no access to the token — see its own
+                // remarks), so the check belongs here, at the one place that does. Still rethrown
+                // unchanged either way: this handler observes, it never changes control flow.
+                if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+
                 _source.Report(proxy.Id, ProxyOutcomeClassifier.FromException(ex), ex.Message);
                 throw;
             }

@@ -17,13 +17,19 @@ public sealed class ProxyOutcomeClassifierTests
     [InlineData(HttpStatusCode.InternalServerError, ProxyOutcome.Success)]
     [InlineData(HttpStatusCode.BadGateway, ProxyOutcome.Success)]
     [InlineData(HttpStatusCode.ServiceUnavailable, ProxyOutcome.Success)]
+    // I2: 408 is the ORIGIN server's own response (its own idle-timeout decision — nothing to do
+    // with the proxy in front of it); 504 is the destination's own gateway answering with an error
+    // status, exactly like 502/503. Both must be Success, not Timeout — an overloaded origin emits
+    // 502/503/504 near-interchangeably, and classifying 504 differently from its siblings would
+    // report the same bad afternoon as Success via one status and Timeout via another, quarantining
+    // every proxy that happens to touch it.
+    [InlineData(HttpStatusCode.RequestTimeout, ProxyOutcome.Success)]
+    [InlineData(HttpStatusCode.GatewayTimeout, ProxyOutcome.Success)]
     // The destination recognized and rejected the IP.
     [InlineData(HttpStatusCode.Forbidden, ProxyOutcome.Banned)]
     [InlineData((HttpStatusCode)429, ProxyOutcome.Banned)]
     // The proxy itself rejected us.
     [InlineData(HttpStatusCode.ProxyAuthenticationRequired, ProxyOutcome.Failure)]
-    [InlineData(HttpStatusCode.RequestTimeout, ProxyOutcome.Timeout)]
-    [InlineData(HttpStatusCode.GatewayTimeout, ProxyOutcome.Timeout)]
     public void FromStatusCode_Should_Blame_The_Right_Party(HttpStatusCode status, ProxyOutcome expected)
     {
         ProxyOutcomeClassifier.FromStatusCode(status).ShouldBe(expected);
