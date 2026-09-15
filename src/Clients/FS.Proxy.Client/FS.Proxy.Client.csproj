@@ -21,6 +21,12 @@
     <IncludeSymbols>false</IncludeSymbols>
     <DebugType>embedded</DebugType>
     <EmbedAllSources>true</EmbedAllSources>
+
+    <!-- EmbedAllSources already puts the sources in the PDB, so SourceLink adds nothing here
+         (Directory.Build.props makes this exact argument for the FSH.Framework local-pack
+         profile) — and it warns on any remote it cannot map to github.com, which is pure
+         noise since sources are already embedded. -->
+    <EnableSourceLink>false</EnableSourceLink>
   </PropertyGroup>
 
   <!-- netstandard2.0 has no built-in System.Text.Json and no nullable attributes. -->
