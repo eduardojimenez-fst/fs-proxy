@@ -122,7 +122,7 @@ Single long-lived branch: **`main`** (the default) — there is **no `develop`**
 | Unit test conventions, NetArchTest | `testing.md` |
 | Integration tests (Testcontainers harness + gotchas) | `integration-testing.md` |
 | **Modifying `src/BuildingBlocks`** (read first — it's protected) | `buildingblocks-protection.md` |
-| A specific module's quirks | `modules/{module}.md` (identity, multitenancy, chat, files, webhooks, auditing, billing, catalog, tickets, notifications) |
+| A specific module's quirks | `modules/{module}.md` (identity, multitenancy, chat, files, webhooks, auditing, billing, catalog, tickets, notifications, proxies) |
 
 **Frontend** (`.agents/rules/frontend/`)
 
