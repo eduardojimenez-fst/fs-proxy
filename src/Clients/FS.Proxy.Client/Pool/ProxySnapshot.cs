@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace FSH.Proxy.Client.Pool;
 
@@ -22,7 +23,16 @@ internal sealed class ProxySnapshot
 #pragma warning restore CA1510
 #endif
 
-        Endpoints = endpoints;
+        // Defensively copied, not merely referenced: IProxyServiceClient and IProxySnapshotCache are
+        // both public extension points, so nothing here can assume a caller-supplied list is never
+        // mutated or reused after this constructor returns. ProxyServiceClient/FileSnapshotCache
+        // happen to allocate a fresh list per call today, so there is no aliasing in the shipped
+        // implementations — but Next() captures Endpoints.Count once and indexes by it afterward; a
+        // collaborator's list that shrank out from under that captured count would make Next() throw
+        // ArgumentOutOfRangeException on the very read path this type exists to keep safe. One
+        // allocation per accepted fetch (not per Next() call) makes the "never mutated after
+        // construction" doc comment below an enforced invariant instead of a hoped-for one.
+        Endpoints = endpoints as ProxyEndpoint[] ?? endpoints.ToArray();
         FetchedAt = fetchedAt;
     }
 

@@ -43,7 +43,12 @@ public sealed class ProxyPool
     private readonly Func<DateTimeOffset> _clock;
     private readonly string _cacheKey;
 
-    /// <summary>Expiry instant per locally-quarantined proxy id. Pruned lazily as <see cref="Next"/> walks past an expired entry.</summary>
+    /// <summary>
+    /// Expiry instant per locally-quarantined proxy id. An id whose cooldown has lapsed is pruned
+    /// lazily as <see cref="Next"/>/<see cref="HealthyCount"/> walk past it; an id the service has
+    /// stopped offering entirely is pruned eagerly in <see cref="AcceptFetch"/> against the new
+    /// snapshot, since the read path is never going to walk past it otherwise.
+    /// </summary>
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _quarantine = new();
 
     /// <summary>
@@ -79,9 +84,14 @@ public sealed class ProxyPool
     }
 
     /// <summary>
-    /// How many proxies in the current snapshot are not presently quarantined. Read-only, no I/O —
-    /// intended for a caller (e.g. <c>ProxySource</c>'s reactive-refresh check) to decide whether a
-    /// pool needs an out-of-band refresh.
+    /// How many proxies in the current snapshot are not presently quarantined, or <c>0</c> if the
+    /// snapshot itself is past <see cref="IsStale"/>. Read-only, no I/O — intended for a caller
+    /// (e.g. <c>ProxySource</c>'s reactive-refresh check) to decide whether a pool needs an
+    /// out-of-band refresh. The staleness check is deliberate, not an oversight: a stale snapshot is
+    /// exactly the one that most needs that out-of-band refresh, and <see cref="Next"/> already
+    /// refuses to serve it — a caller gating on <c>HealthyCount &gt; 0</c> would otherwise see a
+    /// healthy-looking count for a pool whose <see cref="Next"/> is returning <see langword="null"/>,
+    /// and never trigger the recovery it exists to trigger.
     /// </summary>
     public int HealthyCount
     {
@@ -89,6 +99,11 @@ public sealed class ProxyPool
         {
             ProxySnapshot snapshot = _snapshot;
             DateTimeOffset now = _clock();
+            if (now - snapshot.FetchedAt > _options.StaleCeiling)
+            {
+                return 0;
+            }
+
             return snapshot.Endpoints.Count(endpoint => !IsQuarantined(endpoint.Id, now));
         }
     }
@@ -203,11 +218,36 @@ public sealed class ProxyPool
         }
 
         _snapshot = new ProxySnapshot(endpoints, _clock());
+        PruneRetiredQuarantineEntries(endpoints);
         // IProxySnapshotCache.Write is documented to never throw (see the interface and
         // FileSnapshotCache's remarks) — a cache write is best-effort by contract, so no additional
         // try/catch belongs here.
         _options.SnapshotCache?.Write(_cacheKey, endpoints);
         return true;
+    }
+
+    /// <summary>
+    /// Drops any quarantine entry whose proxy id is no longer in <paramref name="endpoints"/>. Without
+    /// this, an id the service has retired is never walked by <see cref="Next"/>/<see cref="HealthyCount"/>
+    /// again — the only two places that otherwise prune a lapsed entry — so it would sit in
+    /// <see cref="_quarantine"/> for the remaining life of the process. This runs once per accepted
+    /// fetch, off the read path, which is the one point where the id universe actually changes.
+    /// </summary>
+    private void PruneRetiredQuarantineEntries(IReadOnlyList<ProxyEndpoint> endpoints)
+    {
+        if (_quarantine.IsEmpty)
+        {
+            return;
+        }
+
+        // HashSet<T>(int capacity) is not available on netstandard2.0 — seed from the sequence
+        // instead of pre-sizing.
+        var currentIds = new HashSet<Guid>(endpoints.Select(endpoint => endpoint.Id));
+
+        foreach (Guid retiredId in _quarantine.Keys.Where(id => !currentIds.Contains(id)))
+        {
+            _quarantine.TryRemove(retiredId, out _);
+        }
     }
 
     /// <summary>
@@ -227,12 +267,15 @@ public sealed class ProxyPool
             return null;
         }
 
-        if (_clock() - snapshot.FetchedAt > _options.StaleCeiling)
+        // Read the clock once: the staleness decision and the quarantine decisions below must be
+        // made against the same instant, or a clock that advances between two separate reads could
+        // make them disagree with each other for no reason a caller could ever observe or explain.
+        DateTimeOffset now = _clock();
+        if (now - snapshot.FetchedAt > _options.StaleCeiling)
         {
             return null;
         }
 
-        DateTimeOffset now = _clock();
         long ticket = Interlocked.Increment(ref _cursor);
 
         for (int offset = 0; offset < count; offset++)
@@ -270,10 +313,17 @@ public sealed class ProxyPool
                 return true;
             }
 
-            // Cooldown lapsed: prune lazily as Next()/HealthyCount walk past it, rather than
-            // running a separate sweep. A benign race with a concurrent Quarantine(proxyId) call
-            // just means the next read re-evaluates from whatever is present then.
-            _quarantine.TryRemove(proxyId, out _);
+            // Cooldown lapsed: prune lazily as Next()/HealthyCount walk past it, rather than running
+            // a separate sweep. Value-comparing removal, not a plain TryRemove(proxyId, ...): a
+            // concurrent Quarantine(proxyId) call could have just installed a fresh, still-live
+            // expiry for this same id between the TryGetValue above and here, and an unconditional
+            // removal would delete THAT entry instead of the lapsed one actually observed — a lost
+            // update that hands out a just-re-quarantined proxy one extra time. Removing only if the
+            // stored value still equals the one just read closes that window. The failure mode this
+            // guards against is benign and self-correcting either way (the next read re-evaluates
+            // whatever is present then) — this is about the comment being honest, not about a defect.
+            ((ICollection<KeyValuePair<Guid, DateTimeOffset>>)_quarantine)
+                .Remove(new KeyValuePair<Guid, DateTimeOffset>(proxyId, expiresAt));
         }
 
         return false;

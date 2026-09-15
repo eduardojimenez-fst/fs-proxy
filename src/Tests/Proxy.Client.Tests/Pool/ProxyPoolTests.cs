@@ -71,6 +71,30 @@ public sealed class ProxyPoolTests
         endpoints.Select(e => e.Id).ShouldContain(result!.Id);
     }
 
+    // Fix round 2 (Important 3): "clamps count to PoolSize" and "requests for the pool's own tags"
+    // had no dedicated assertion — ClientReturning's setup matches Arg.Any<int>()/
+    // Arg.Any<IReadOnlyList<string>>(), so a hardcoded request count or the wrong tag list would
+    // have passed every other test in this file.
+    [Fact]
+    public async Task WarmupAsync_Should_Request_The_Pools_Tags_And_PoolSize()
+    {
+        List<string> tags = ["country:cl", "entitytype:tender"];
+        var options = Options();
+        options.PoolSize = 7;
+        var client = ClientReturning(Endpoints(1));
+        var pool = new ProxyPool(client, options, tags);
+
+        await pool.WarmupAsync(CancellationToken.None);
+
+        // NSubstitute's Received() assertion is synchronous — it only inspects the call history —
+        // so the Task it hands back here is never meant to be awaited; discard it explicitly rather
+        // than triggering CS4014 ("this call is not awaited").
+        _ = client.Received(1).RequestAsync(
+            Arg.Is<IReadOnlyList<string>>(sent => sent.SequenceEqual(tags)),
+            7,
+            Arg.Any<CancellationToken>());
+    }
+
     // 2. Next() rotates: over N calls against a pool of N, every proxy is returned exactly once.
     [Fact]
     public async Task Next_Should_Rotate_So_Every_Proxy_Is_Returned_Exactly_Once_Over_N_Calls()
@@ -149,8 +173,11 @@ public sealed class ProxyPoolTests
     public async Task RefreshAsync_Should_Keep_Serving_The_Previous_Snapshot_When_The_Service_Returns_Empty()
     {
         var endpoints = Endpoints(2);
+        var clock = new FakeClock();
+        var options = Options();
+        options.StaleCeiling = TimeSpan.FromMinutes(10);
         var client = ClientReturning(endpoints);
-        var pool = new ProxyPool(client, Options(), ["country:cl"]);
+        var pool = new ProxyPool(client, options, ["country:cl"], clock.Get);
         await pool.WarmupAsync(CancellationToken.None);
 
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -161,6 +188,15 @@ public sealed class ProxyPoolTests
 
         result.ShouldNotBeNull();
         endpoints.Select(e => e.Id).ShouldContain(result!.Id);
+
+        // Fix round 2: an empty refresh must not re-stamp FetchedAt. Advancing the clock past
+        // StaleCeiling, measured from the ORIGINAL warmup instant, must still make the snapshot
+        // stale — if a future edit bumped FetchedAt on an empty fetch, a pool whose service has been
+        // down for hours would never go stale and would keep handing out long-retired proxies past
+        // StaleCeiling forever. The two assertions above would pass either way; only this one pins it.
+        clock.Now += TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+        pool.IsStale.ShouldBeTrue();
+        pool.Next().ShouldBeNull();
     }
 
     // Extra: the same degrade-don't-fail contract applies when the transport throws outright, not
@@ -171,8 +207,11 @@ public sealed class ProxyPoolTests
     public async Task RefreshAsync_Should_Keep_Serving_The_Previous_Snapshot_When_The_Transport_Throws()
     {
         var endpoints = Endpoints(2);
+        var clock = new FakeClock();
+        var options = Options();
+        options.StaleCeiling = TimeSpan.FromMinutes(10);
         var client = ClientReturning(endpoints);
-        var pool = new ProxyPool(client, Options(), ["country:cl"]);
+        var pool = new ProxyPool(client, options, ["country:cl"], clock.Get);
         await pool.WarmupAsync(CancellationToken.None);
 
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -183,6 +222,12 @@ public sealed class ProxyPoolTests
 
         result.ShouldNotBeNull();
         endpoints.Select(e => e.Id).ShouldContain(result!.Id);
+
+        // Fix round 2: same FetchedAt pin as the empty-result case above, for the transport-throws
+        // path — a failed refresh must not reset the staleness clock either.
+        clock.Now += TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+        pool.IsStale.ShouldBeTrue();
+        pool.Next().ShouldBeNull();
     }
 
     // 7. Past StaleCeiling, IsStale is true and Next() returns null.
@@ -340,6 +385,63 @@ public sealed class ProxyPoolTests
 
         pool.Quarantine(endpoints[0].Id);
 
+        pool.HealthyCount.ShouldBe(2);
+    }
+
+    // Fix round 2 (Important 2): HealthyCount must not report proxies as healthy once the snapshot
+    // itself is stale. Next() already refuses to serve a stale snapshot; a caller gating an
+    // out-of-band refresh on HealthyCount > 0 (HealthyCount's own documented purpose) would
+    // otherwise see a healthy-looking count for a pool that Next() is silently starving, and never
+    // trigger the recovery it exists to trigger.
+    [Fact]
+    public async Task HealthyCount_Should_Be_Zero_Once_The_Snapshot_Is_Stale()
+    {
+        var endpoints = Endpoints(3);
+        var clock = new FakeClock();
+        var options = Options();
+        options.StaleCeiling = TimeSpan.FromMinutes(10);
+        var pool = await WarmedPool(endpoints, clock.Get, options);
+
+        clock.Now += TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+
+        pool.HealthyCount.ShouldBe(0);
+    }
+
+    // Fix round 2 (Important 4): a proxy's local quarantine must not survive it being retired
+    // server-side. Without pruning, this id would sit in the quarantine dictionary for the rest of
+    // the process's life once it leaves every future snapshot — and if the service ever reissues the
+    // same id later, it would incorrectly still read as quarantined until the ORIGINAL cooldown
+    // elapsed, no matter how much later it actually reappeared. Observed here via HealthyCount: if
+    // pruning didn't run when the proxy was retired, its quarantine entry would still be present
+    // (and still live, since the 2-minute cooldown has not elapsed) when it reappears.
+    [Fact]
+    public async Task Refresh_Should_Drop_Quarantine_For_A_Proxy_Retired_Server_Side()
+    {
+        var endpoints = Endpoints(2);
+        var quarantined = endpoints[0];
+        var survivor = endpoints[1];
+        var clock = new FakeClock();
+        var options = Options();
+        options.Quarantine = TimeSpan.FromMinutes(2);
+        var client = ClientReturning(endpoints);
+        var pool = new ProxyPool(client, options, ["country:cl"], clock.Get);
+        await pool.WarmupAsync(CancellationToken.None);
+
+        pool.Quarantine(quarantined.Id);
+        pool.HealthyCount.ShouldBe(1);
+
+        // Retire the quarantined proxy server-side: the next fetch no longer includes it.
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>([survivor]));
+        await pool.RefreshAsync(CancellationToken.None);
+
+        // The service reissues the SAME id — still well within the original 2-minute cooldown.
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>([quarantined, survivor]));
+        await pool.RefreshAsync(CancellationToken.None);
+
+        // Had the quarantine entry survived the retirement, this would still be 1 until clock.Now
+        // passed the ORIGINAL cooldown — it has not been advanced at all in this test.
         pool.HealthyCount.ShouldBe(2);
     }
 }
