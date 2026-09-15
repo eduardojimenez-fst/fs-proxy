@@ -16,7 +16,9 @@ namespace FSH.Proxy.Client.Feedback;
 /// <b><see cref="Enqueue"/> never blocks and never throws.</b> Feedback is telemetry describing a
 /// scrape attempt; it must never be able to throttle or break the scrape it describes. The queue is
 /// bounded by <c>ProxyClientOptions.FeedbackQueueCapacity</c> — on overflow it drops the event and
-/// counts it in <see cref="DroppedCount"/>, it does not wait for room.
+/// counts it in <see cref="DroppedCount"/>, it does not wait for room. This holds even if a
+/// caller-supplied <c>sampler</c> delegate itself throws: a throwing sampler is treated as "do not
+/// transmit this Success", never as a reason for <see cref="Enqueue"/> to propagate.
 /// </para>
 /// <para>
 /// <b><see cref="ProxyOutcome.Success"/> is not transmitted at default settings.</b> The service's
@@ -70,12 +72,18 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Count of events lost rather than delivered: queue-capacity overflows from <see cref="Enqueue"/>
-    /// and events belonging to a batch a transport exception took down during <see cref="FlushAsync"/>.
-    /// Does NOT include a <see cref="ProxyOutcome.Success"/> event skipped by
-    /// <c>ProxyClientOptions.SuccessSampling</c> — that is an intentional policy filter, not a loss.
+    /// Count of events lost rather than delivered: queue-capacity overflows from <see cref="Enqueue"/>,
+    /// plus — once a transport exception hits during a <see cref="FlushAsync"/> call — every event that
+    /// call was holding, not merely the batch in flight when the exception fired (see
+    /// <see cref="FlushAsync"/>'s remarks). Does NOT include a <see cref="ProxyOutcome.Success"/> event
+    /// skipped by <c>ProxyClientOptions.SuccessSampling</c>, and does NOT include one skipped because
+    /// the injected sampler itself threw — both are an intentional/defensive "do not transmit", not a
+    /// loss.
     /// </summary>
     public long DroppedCount => Interlocked.Read(ref _droppedCount);
+
+    /// <summary>Current queue length. Test-only — not part of the public SDK surface.</summary>
+    internal int QueuedCount => Interlocked.CompareExchange(ref _count, 0, 0);
 
     /// <summary>
     /// Records one usage outcome for later delivery. Synchronous, non-blocking, and cannot throw: the
@@ -102,10 +110,20 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     /// <summary>
     /// Drains the queue in batches of up to <c>ProxyClientOptions.FeedbackBatchSize</c>, submitting
     /// each through <see cref="IProxyServiceClient.RequestFeedbackAsync"/> until the queue is empty. A
-    /// call against an empty queue makes no HTTP call at all. Any exception the transport raises is
-    /// swallowed — feedback must never break the scrape it describes — and the batch already dequeued
-    /// at that point is counted into <see cref="DroppedCount"/>, since it is lost either way.
+    /// call against an empty queue makes no HTTP call at all.
     /// </summary>
+    /// <remarks>
+    /// Any exception the transport raises is swallowed — feedback must never break the scrape it
+    /// describes. On such a failure this call gives up entirely rather than trying the next batch: a
+    /// transport that just failed is likely to fail again immediately, and retrying in a tight loop
+    /// would turn one call into an unbounded run against an already-down service — a real risk for
+    /// <see cref="Dispose"/>/<see cref="DisposeAsync"/>'s bounded shutdown window in particular. So the
+    /// failing batch AND everything still queued behind it at that moment are both counted into
+    /// <see cref="DroppedCount"/> and removed from the queue: for a periodic caller (<c>ProxySource</c>),
+    /// events enqueued after this call returns are unaffected and go out on the next cycle as normal;
+    /// for a final flush during disposal, there is no next cycle, so the counter has to reflect the
+    /// whole loss right here or it would silently under-report it.
+    /// </remarks>
     public async Task FlushAsync(CancellationToken ct = default)
     {
         while (true)
@@ -118,9 +136,9 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
 
 #pragma warning disable CA1031 // A transport failure here (network blip, 5xx, timeout, or the
             // caller's own cancellation racing a disposal timeout) must never propagate out of
-            // FlushAsync — feedback describes a scrape, it must not be able to break it. The batch is
-            // already dequeued at this point, so it is lost regardless of which exception fired;
-            // counting it into DroppedCount keeps that loss observable.
+            // FlushAsync — feedback describes a scrape, it must not be able to break it. See the
+            // method's remarks for why the whole remaining queue is dropped alongside this batch,
+            // rather than only this one.
             try
             {
                 await _client.RequestFeedbackAsync(batch, ct).ConfigureAwait(false);
@@ -128,6 +146,7 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
             catch (Exception)
             {
                 Interlocked.Add(ref _droppedCount, batch.Count);
+                DropRemainingQueue(ct);
                 return;
             }
 #pragma warning restore CA1031
@@ -151,6 +170,22 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
         return batch;
     }
 
+    /// <summary>
+    /// Drains and counts as dropped everything still in the queue after a transport failure has
+    /// already given up on this <see cref="FlushAsync"/> call — see its remarks. Stops early if
+    /// <paramref name="ct"/> is already signaled by the time this runs (e.g. a disposal timeout that
+    /// fired during the failing transport call itself): whatever is left in that case simply stays
+    /// queued, exactly as an ordinary un-drained backlog would.
+    /// </summary>
+    private void DropRemainingQueue(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && _queue.TryDequeue(out _))
+        {
+            Interlocked.Decrement(ref _count);
+            Interlocked.Increment(ref _droppedCount);
+        }
+    }
+
     private bool ShouldTransmitSuccess()
     {
         double sampling = _options.SuccessSampling;
@@ -160,8 +195,25 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
         }
 
         // >= 1 short-circuits without drawing from the sampler: guarantees "always transmitted" even
-        // for a sampler whose contract does not strictly promise a value below 1.0.
-        return sampling >= 1 || _sampler() < sampling;
+        // for a sampler whose contract does not strictly promise a value below 1.0 — and also means a
+        // misbehaving sampler is never even called at this setting.
+        if (sampling >= 1)
+        {
+            return true;
+        }
+
+#pragma warning disable CA1031 // Enqueue's "never throws" guarantee is only as strong as the sampler a
+        // caller injects through the constructor. A sampler that throws is treated the same as "do not
+        // transmit this Success" — not as a reason for Enqueue to propagate an exception.
+        try
+        {
+            return _sampler() < sampling;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+#pragma warning restore CA1031
     }
 
     // CA5394 ("Random is an insecure RNG") flags any use of System.Random — this sampler decides
