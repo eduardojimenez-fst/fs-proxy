@@ -33,6 +33,14 @@
     <PackageReference Include="System.Text.Json" />
   </ItemGroup>
 
+  <!-- ProxySnapshot (Pool/) is internal on purpose — it is an implementation detail of ProxyPool,
+       not part of the SDK's public surface. Proxy.Client.Tests still needs to construct one
+       directly to pin the "always defensively copies" invariant against a caller-mutated array,
+       which ProxyPool's own public API cannot observe from the outside. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Proxy.Client.Tests" />
+  </ItemGroup>
+
   <!--
     Directory.Build.targets sets IncludeSymbols=true for every packable project, and it is imported
     after this file — so a PropertyGroup here cannot win. Property assignments inside a Target run at

@@ -23,16 +23,22 @@ internal sealed class ProxySnapshot
 #pragma warning restore CA1510
 #endif
 
-        // Defensively copied, not merely referenced: IProxyServiceClient and IProxySnapshotCache are
-        // both public extension points, so nothing here can assume a caller-supplied list is never
-        // mutated or reused after this constructor returns. ProxyServiceClient/FileSnapshotCache
-        // happen to allocate a fresh list per call today, so there is no aliasing in the shipped
-        // implementations — but Next() captures Endpoints.Count once and indexes by it afterward; a
-        // collaborator's list that shrank out from under that captured count would make Next() throw
-        // ArgumentOutOfRangeException on the very read path this type exists to keep safe. One
-        // allocation per accepted fetch (not per Next() call) makes the "never mutated after
-        // construction" doc comment below an enforced invariant instead of a hoped-for one.
-        Endpoints = endpoints as ProxyEndpoint[] ?? endpoints.ToArray();
+        // Defensively copied, ALWAYS — not merely referenced, and not via an "endpoints as
+        // ProxyEndpoint[] ?? endpoints.ToArray()" fast path either. IProxyServiceClient and
+        // IProxySnapshotCache are both public extension points, so nothing here can assume a
+        // caller-supplied list is never mutated or reused after this constructor returns —
+        // ProxyServiceClient/FileSnapshotCache happen to allocate a fresh List<T> per call today, but
+        // a `ProxyEndpoint[]` is one of the most natural shapes for a custom IProxyServiceClient or
+        // IProxySnapshotCache to hand back (e.g. straight out of
+        // JsonSerializer.Deserialize<ProxyEndpoint[]>), and an `as ProxyEndpoint[]` fast path would
+        // skip the copy for exactly that shape. An aliased array cannot shrink out from under Next()'s
+        // captured count the way a List<T> could, but a caller mutating an element in place after
+        // handing the array over would silently serve wrong proxy data through the live snapshot —
+        // worse than the ArgumentOutOfRangeException the List<T> case risks, because it never throws
+        // and never announces itself. Always copying makes "never mutated after construction" (see the
+        // doc comment below) an invariant enforced against any implementation, not one that happens to
+        // hold for the two shipped today.
+        Endpoints = endpoints.ToArray();
         FetchedAt = fetchedAt;
     }
 

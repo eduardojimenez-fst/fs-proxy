@@ -56,6 +56,31 @@ public sealed class ProxyPoolTests
         public DateTimeOffset Get() => Now;
     }
 
+    // Fix round 3 (Item 2): ProxySnapshot must copy even when handed a ProxyEndpoint[] directly, not
+    // just a List<ProxyEndpoint>. The coordinator's original suggested fix ("endpoints as
+    // ProxyEndpoint[] ?? endpoints.ToArray()") would have skipped the defensive copy for exactly this
+    // shape — and a bare array is one of the most natural things for a custom
+    // IProxyServiceClient/IProxySnapshotCache to hand back (e.g. straight out of
+    // JsonSerializer.Deserialize<ProxyEndpoint[]>). Requires InternalsVisibleTo(Proxy.Client.Tests)
+    // on FS.Proxy.Client, since ProxySnapshot is internal — ProxyPool's own public surface has no way
+    // to observe this invariant directly.
+    [Fact]
+    public void ProxySnapshot_Should_Not_Be_Affected_By_Mutating_The_Original_Array_Afterward()
+    {
+        ProxyEndpoint[] original = [.. Endpoints(2)];
+        Guid originalFirstId = original[0].Id;
+
+        var snapshot = new ProxySnapshot(original, DateTimeOffset.UtcNow);
+
+        // Mutate the ORIGINAL array's slot (not the immutable ProxyEndpoint instance itself — every
+        // ProxyEndpoint property is get-only) after the snapshot was built.
+        original[0] = new ProxyEndpoint(Guid.NewGuid(), "replaced", 9999, ProxyProtocol.Http, "x", "y");
+
+        // If the constructor had aliased the array instead of copying it, this would now read the
+        // replacement's id instead.
+        snapshot.Endpoints[0].Id.ShouldBe(originalFirstId);
+    }
+
     // 1. WarmupAsync fills from the service and Next() then returns a proxy.
     [Fact]
     public async Task WarmupAsync_Should_Fill_From_The_Service_So_Next_Returns_A_Proxy()
@@ -180,6 +205,13 @@ public sealed class ProxyPoolTests
         var pool = new ProxyPool(client, options, ["country:cl"], clock.Get);
         await pool.WarmupAsync(CancellationToken.None);
 
+        // Fix round 3: advance the clock BEFORE the failing refresh, well short of StaleCeiling.
+        // Without this, the refresh runs at the same instant as the warmup, so a regression that
+        // re-stamps FetchedAt = _clock() during an empty refresh would compute the exact same value
+        // as the untouched warmup timestamp — making the assertions below pass under both the
+        // correct code and the precise bug they exist to catch.
+        clock.Now += TimeSpan.FromMinutes(5);
+
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult<IReadOnlyList<ProxyEndpoint>>([]));
 
@@ -189,12 +221,13 @@ public sealed class ProxyPoolTests
         result.ShouldNotBeNull();
         endpoints.Select(e => e.Id).ShouldContain(result!.Id);
 
-        // Fix round 2: an empty refresh must not re-stamp FetchedAt. Advancing the clock past
-        // StaleCeiling, measured from the ORIGINAL warmup instant, must still make the snapshot
-        // stale — if a future edit bumped FetchedAt on an empty fetch, a pool whose service has been
-        // down for hours would never go stale and would keep handing out long-retired proxies past
-        // StaleCeiling forever. The two assertions above would pass either way; only this one pins it.
-        clock.Now += TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+        // An empty refresh must not re-stamp FetchedAt. Advance a further 5 minutes + 1 second: the
+        // total from the ORIGINAL warmup instant is 10 minutes + 1 second (just past the 10-minute
+        // StaleCeiling), but the total from the refresh instant is only 5 minutes + 1 second (well
+        // under it). So this is only stale if FetchedAt is still the warmup timestamp — a bug that
+        // bumped FetchedAt during the empty refresh would make both assertions below fail instead of
+        // passing regardless, which is what fix round 2's version of this test could not do.
+        clock.Now += TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1);
         pool.IsStale.ShouldBeTrue();
         pool.Next().ShouldBeNull();
     }
@@ -214,6 +247,10 @@ public sealed class ProxyPoolTests
         var pool = new ProxyPool(client, options, ["country:cl"], clock.Get);
         await pool.WarmupAsync(CancellationToken.None);
 
+        // Fix round 3: same reasoning as the empty-refresh test above — advance before the failing
+        // refresh so a re-stamped FetchedAt would produce a distinguishable timestamp.
+        clock.Now += TimeSpan.FromMinutes(5);
+
         client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromException<IReadOnlyList<ProxyEndpoint>>(new HttpRequestException("boom")));
 
@@ -223,9 +260,11 @@ public sealed class ProxyPoolTests
         result.ShouldNotBeNull();
         endpoints.Select(e => e.Id).ShouldContain(result!.Id);
 
-        // Fix round 2: same FetchedAt pin as the empty-result case above, for the transport-throws
-        // path — a failed refresh must not reset the staleness clock either.
-        clock.Now += TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+        // Same FetchedAt pin as the empty-result case above, for the transport-throws path: total
+        // from warmup is 10 minutes + 1 second (past StaleCeiling); total from the refresh instant
+        // is only 5 minutes + 1 second (well under it) — distinguishing a correct "FetchedAt
+        // untouched" from a regressed "FetchedAt re-stamped on throw."
+        clock.Now += TimeSpan.FromMinutes(5) + TimeSpan.FromSeconds(1);
         pool.IsStale.ShouldBeTrue();
         pool.Next().ShouldBeNull();
     }
