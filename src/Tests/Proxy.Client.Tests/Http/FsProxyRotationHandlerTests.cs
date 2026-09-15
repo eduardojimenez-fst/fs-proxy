@@ -98,8 +98,9 @@ public sealed class FsProxyRotationHandlerTests
     /// <summary>
     /// Returns a caller-controlled, not-yet-completed <see cref="Task{TResult}"/> from SendAsync — lets
     /// a test hold a send "in flight" indefinitely and complete it on demand. Records whether Dispose
-    /// was ever called while that task was still incomplete, which is the direct, deterministic proof
-    /// that eviction did NOT tear down a handler a request was still using.
+    /// was ever called while that task was still incomplete (the proof eviction did NOT tear down a
+    /// handler a request was still using) AND whether it was ever disposed at all (the proof the
+    /// deferred-dispose half of the fix does not leak the evicted-while-in-flight handler forever).
     /// </summary>
     private sealed class BlockingHandler : HttpMessageHandler
     {
@@ -109,13 +110,19 @@ public sealed class FsProxyRotationHandlerTests
 
         public bool DisposedWhileStillInFlight { get; private set; }
 
+        public bool Disposed { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => _tcs.Task;
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing && !_tcs.Task.IsCompleted)
+            if (disposing)
             {
-                DisposedWhileStillInFlight = true;
+                Disposed = true;
+                if (!_tcs.Task.IsCompleted)
+                {
+                    DisposedWhileStillInFlight = true;
+                }
             }
 
             base.Dispose(disposing);
@@ -528,6 +535,11 @@ public sealed class FsProxyRotationHandlerTests
 
         blockingResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
         blockingHandler.DisposedWhileStillInFlight.ShouldBeFalse();
+        // The other half of the fix, otherwise uncovered: TryDisposeIfEvictedAndDrained exists so an
+        // entry evicted while in flight is NOT disposed early, but it must still eventually be disposed
+        // once drained — otherwise the deferred-dispose path itself would leak the handler (and its
+        // connection pool) forever instead of merely delaying its cleanup.
+        blockingHandler.Disposed.ShouldBeTrue();
         // The proxy that answered slowly still answered correctly — it must be reported as Success,
         // never as a Failure manufactured by this handler's own eviction disposing its transport out
         // from under it.

@@ -45,8 +45,17 @@ namespace FSH.Proxy.Client.Http;
 /// and any Polly resilience policy wired onto the client's builder simply do not run while a proxy is
 /// in play. <see cref="DelegatingHandler.InnerHandler"/> is used only for the no-proxy-available
 /// fallback (behaviour 7) — see <see cref="SendDirectAsync"/>. Eviction from the bounded cache is
-/// reference-counted so it can never dispose a handler a request is still sending through — see
-/// <see cref="GetOrCreateEntry"/> and <see cref="EvictLeastRecentlyUsedIfOverCapacity"/>.
+/// reference-counted so it can never dispose a handler while the request/response exchange it is
+/// handling is still in flight — see <see cref="GetOrCreateEntry"/> and
+/// <see cref="EvictLeastRecentlyUsedIfOverCapacity"/>. That guarantee covers exactly the span
+/// <c>SendAsync</c> owns: the claim releases the instant <c>invoker.SendAsync</c> returns, which is
+/// when response HEADERS become available, not when the body has been fully read. A caller using
+/// <c>HttpCompletionOption.ResponseHeadersRead</c> or otherwise streaming a large response body past
+/// that point is holding a connection this handler no longer considers "in use", and that connection
+/// can be evicted and disposed while the body is still streaming — a truncated or faulted read for
+/// that caller, but NOT a misattributed proxy fault: <see cref="IProxySource.Report"/> has already
+/// fired with the real outcome by the time <c>SendAsync</c> returns, so nothing false reaches the
+/// policy engine from this.
 /// </description>
 /// </item>
 /// <item>
