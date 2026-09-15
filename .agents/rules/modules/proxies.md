@@ -6,7 +6,9 @@ health checks, and dual-auth (API key + JWT) consumer endpoints for leasing a pr
 usage feedback. Module `Order = 650`.
 
 **Entities / DbContext:** `Proxy`, `ApiClient`, `ProxyUsageEvent`, `Tag` / `TagCategory`,
-`PolicyProfile`, `ProviderAccount`, `HealthCheckTarget`. `ProxiesDbContext` (tenant-filtered).
+`PolicyProfile`, `ProviderAccount`, `HealthCheckTarget`. `ProxiesDbContext` — every entity is
+`IGlobalEntity`, so Finbuckle's tenant filter does not apply. This is what lets the API-key
+consumer path work with no `tenant` header.
 
 ## Consumer-facing feedback endpoints
 
@@ -28,7 +30,7 @@ Lets a scraper flush many reported outcomes in a single call instead of one HTTP
 event. Endpoint name `"ReportProxyFeedbackBatch"` (`ReportProxyFeedbackBatchEndpoint`).
 
 - **Auth:** same `ProxiesConsumerAccess` policy as the single-event endpoint above — `X-Api-Key` or a
-  JWT carrying `Proxies.Consumers.Request`.
+  JWT carrying `Permissions.Proxies.Consumers.Request`.
 - **Request body:**
 
   ```json
@@ -43,7 +45,8 @@ event. Endpoint name `"ReportProxyFeedbackBatch"` (`ReportProxyFeedbackBatchEndp
   `outcome` is one of `UsageEventOutcome`: `Success`, `Failure`, `Banned`, `Timeout` (serialized as
   strings — `Program.cs` registers `JsonStringEnumConverter`). `detail` is optional, max 2048 chars.
 
-- **200-event cap:** `events` must contain 1–200 items (`ReportProxyFeedbackBatchCommandValidator.MaxBatchSize`).
+- **200-event cap:** `events` must contain 1–200 items (`MaxBatchSize`, a private constant in
+  `ReportProxyFeedbackBatchCommandValidator`).
   A null, empty, or oversized `events` fails validation with `400`, not an exception — a JSON body can
   deserialize a missing `events` property to `null` despite the non-nullable annotation, and the
   validator is written to handle that rather than dereference it.

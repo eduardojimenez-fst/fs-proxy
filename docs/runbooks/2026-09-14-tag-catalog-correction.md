@@ -16,7 +16,10 @@ environments and nothing else. QA and Production must be corrected through the a
 
 ## Before you start
 
-- A JWT for a user holding `ProxiesPermissions.Tags.Update` and `ProxiesPermissions.ProviderAccounts.View`.
+- A JWT for a user holding `ProxiesPermissions.Tags.View`, `ProxiesPermissions.Tags.Update`, and
+  `ProxiesPermissions.ProviderAccounts.View` (Steps 1 and 4 call `GET /tag-categories`, which
+  requires `Tags.View`; Step 3's `POST`/`DELETE` require `Tags.Update`; Step 2's `GET /proxies`
+  requires `ProviderAccounts.View`).
 - `BASE` set to the environment root, e.g. `export BASE=https://proxy-qa.falconsoft.cl`.
 - `TOKEN` set to that JWT.
 
@@ -51,19 +54,25 @@ Re-tag them first (`entitytype:attachments` → `entitytype:tender` + `operation
 
 ## Step 3 — Apply the corrections
 
+The two `DELETE`s are safe to re-run (`TagCategory.RemoveValue` uses `RemoveAll` and is a no-op on
+a value that is already gone). The `POST` is **not** safely re-runnable — `TagCategory.AddValue`
+throws `InvalidOperationException` on a duplicate value. If it already returned `204` once, skip it
+on any re-run of this step.
+
 ```bash
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" -w '%{http_code}\n' \
   "$BASE/api/v1/proxies/tag-categories/$CAT/values/Attachments"
 
-curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" -w '%{http_code}\n' \
   "$BASE/api/v1/proxies/tag-categories/$CAT/values/QuoteAgreementHardwareStorare"
 
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -w '%{http_code}\n' \
   -d '{"value":"QuoteAgreementHardwareStorage"}' \
   "$BASE/api/v1/proxies/tag-categories/$CAT/values"
 ```
 
-Each returns `204 No Content`.
+Each prints `204` (the `-w` status code appended after the empty body).
 
 ## Step 4 — Verify
 
