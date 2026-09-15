@@ -140,13 +140,20 @@ services.AddHttpClient("mercadopublico").AddFsProxyRotation(ProxyTags.Country.Ch
 
 Scrapers are batch processes that start and die. If the service is unreachable at startup, the process would not start at all — a real availability regression versus `webscraper.json`. So the snapshot is cached:
 
-- **Redis** for TAG (`FS.Proxy.Client.Redis`, net10 only).
-- **JSON file** for legacy (core package, zero dependencies).
+- **JSON file**, in the core package, zero dependencies. This is the only cache shipped in phase 2.
+- **Redis is deferred** (decision, 2026-09-15). It was to be a second package acting as an L2 in
+  front of `/request` for TAG's many workers, but only phase 3 needs it, and shipping one package
+  is materially simpler. The `IProxySnapshotCache` seam ships now — it is needed anyway to fake the
+  cache in tests — so Redis can be added later as a separate package with no breaking change to
+  the core.
 - **Plaintext, unencrypted, by explicit decision.** These are internal systems, and the status quo — plaintext provider credentials committed to source control — is strictly worse than a runtime-generated cache. Simplicity was chosen over DPAPI/encryption for this phase.
 - The file lives in a runtime path (`%PROGRAMDATA%` or equivalent), **never** alongside the config JSON, and is added to `.gitignore`. The realistic risk is not disk access, it is the cache file being committed.
 - TTL 24 h.
 
-**Redis doubles as an L2 in front of `/request`**: memory → Redis → API. Ten TAG workers collapse from one refresh each every 90 s to roughly one refresh per tag-set. Last-writer-wins is sufficient; the snapshot is idempotent.
+When Redis is added it doubles as an L2 in front of `/request`: memory → Redis → API. Ten TAG
+workers would collapse from one refresh each every 90 s to roughly one refresh per tag-set.
+Last-writer-wins is sufficient; the snapshot is idempotent. Until then each worker refreshes on its
+own, which at phase-3 scale is a handful of extra calls per minute against a cheap endpoint.
 
 ---
 
@@ -316,9 +323,17 @@ The **API key travels in an environment variable** (`FSPROXY_APIKEY`), never in 
 - **`<TargetFramework></TargetFramework>` must be explicitly cleared in the csproj.** `src/Directory.Build.props` sets the singular property globally; with both set, MSBuild silently honours the singular and builds net10 only.
 - **`<IsPackable>true</IsPackable>` explicitly** — the repo default is `false` under the template's source-ownership model.
 - `AnalysisMode=AllEnabledByDefault` + `TreatWarningsAsErrors` + `Nullable=enable` apply to the `netstandard2.0` target too. Budget for it: missing nullable attributes, `System.Text.Json` needs a `PackageReference`.
-- **Two packages.** `FS.Proxy.Client` (core) carries zero non-BCL dependencies and includes the file cache. `FS.Proxy.Client.Redis` (net10 only) is the sole package pulling `StackExchange.Redis`. Legacy scrapers do not inherit a dependency graph they never asked for.
+- **One package in phase 2.** `FS.Proxy.Client` carries no dependency outside the BCL beyond
+  `System.Text.Json` on the `netstandard2.0` target, and includes the file cache. A future
+  `FS.Proxy.Client.Redis` (net10 only) would be the sole package pulling `StackExchange.Redis`, so
+  legacy scrapers never inherit a dependency graph they did not ask for.
 - Add a `/Clients/` folder to `src/FS.Proxy.slnx`.
-- Published to the internal private feed, SemVer.
+- **Feed: the existing local folder feed** (decision, 2026-09-15). `NuGet.config` already declares
+  `fsh-local` pointing at a directory, alongside `nuget.org`. Phase 2 packs and pushes there. Note
+  the configured path is a developer's home directory, so it serves one machine — moving to a
+  network share or a hosted feed (Azure Artifacts, GitHub Packages) is a prerequisite for anyone
+  else consuming the package, and belongs to whoever sets up phase 3.
+- SemVer, starting at `0.1.0-preview`.
 
 ---
 
@@ -356,9 +371,16 @@ derived from and does not apply here. SDK documentation and its changelog ship w
 | 0 | Catalog corrections (§5.1), source + QA + Production | — |
 | 1 | `/feedback/batch` endpoint + contracts + tests | — |
 | 2 | SDK core: level 0, pool, feedback, file cache, `ProxyTags`. Publish preview to the feed | 1 |
-| 3 | TAG integration: `ProxyInfo.ProxyId`, `LoadWebScraperConfiguration`, `RenewProxy` reports, tags per sub-section, Redis cache | 2 |
+| 3 | TAG integration: `ProxyInfo.ProxyId`, `LoadWebScraperConfiguration`, `RenewProxy` reports, tags per sub-section | 2 |
 | 4 | One legacy pilot scraper, then the rest | 2 |
-| 5 | `DelegatingHandler` + documentation | 3 |
+| 5 | `DelegatingHandler` + documentation | 2 |
+
+**Phases 3 and 4 are not work in this repository.** TAG and the legacy scrapers are separate
+codebases; this repo holds only the backend and the two React apps. What ships from here is the
+package plus an integration guide. Phase 5 was originally sequenced after phase 3 so the handler
+could learn from a real integration; it is folded into phase 2 instead, because it is a few dozen
+lines in the same package and splitting it would cost a second release cycle for no new
+information.
 
 Phase 1 is independent and mergeable on its own. Phases 3 and 4 run in parallel.
 
