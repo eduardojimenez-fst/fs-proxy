@@ -105,9 +105,14 @@ Supporting changes:
 - **Per-process sub-sections become tag sets.** `WebScraperSettings.Resolve(config, scrapElement)` stops returning a proxy list and returns tags:
 
 ```json
-"Tender-Attachments": { "ProxyTags": [ "entitytype:attachments", "country:cl" ] },
+"Tender-Attachments": { "ProxyTags": [ "entitytype:tender", "operationtype:attachments", "country:cl" ] },
 "PurchaseOrder":      { "ProxyTags": [ "entitytype:purchaseorder", "country:cl" ] }
 ```
+
+Note that `Tender-Attachments` is not one dimension but a **combination**: entity type `tender`
+*and* operation type `attachments`. This is exactly what `RequestProxiesQueryHandler` does — it ANDs
+every tag in the request — so the existing per-process pools decompose naturally into the catalog's
+dimensions instead of needing a tag of their own.
 
 Side effect worth stating: **`webscraper.json` stops carrying provider credentials in plaintext.** The only remaining secret is the API key, supplied through an environment variable.
 
@@ -226,7 +231,7 @@ public static class ProxyTags
 
 var proxies = source.GetProxies(
     ProxyTags.Country.Chile,
-    ProxyTags.EntityType.Attachments,
+    ProxyTags.OperationType.Attachments,
     "experimento:nuevo-portal");        // custom, no ceremony
 ```
 
@@ -236,16 +241,40 @@ Three details:
 
 1. **Constants encode the post-normalization form.** `TagCategory.Create` only trims the category name, but `Tag.Normalize` lowercases the whole composed string — so `entityType` + `Tender` becomes `entitytype:tender`. `GetProxies` applies the same normalization to whatever is passed, so `"entityType:Tender"` and `"entitytype:tender"` resolve identically.
 2. **Drift test against the seed.** The SDK targets `netstandard2.0` and cannot reference `Modules.Proxies`, so the constants are hand-maintained. A test in `Proxies.Tests` (which sees both) compares the SDK's constant set against `TagCategorySeedData.Categories` and fails when a seed value is added without its constant.
-3. **`Attachments` is seeded under two categories** — both `entityType` and `operationType` carry
-   the value. Whichever is chosen must be used consistently by the tagging work in phase 3 and by
-   the SDK constants, or a pool will silently resolve to zero proxies. This spec assumes
-   `entitytype:attachments`; see open questions.
+3. **`Attachments` belongs to `operationType` only.** The seed currently carries it under
+   `entityType` as well; that duplicate is a mistake and is removed (see §5.1). An attachment run is
+   the combination `entitytype:tender` + `operationtype:attachments`, not a single tag.
 4. **`source` values contain spaces and dashes** — the real tag is `source:chile - mercado publico`. Left as-is: already seeded in QA and Production, and changing them forces a full retag. Slugifying is a separate task with migration cost.
 
 Two observations from the seed:
 
 - **`application` already anticipates this work**, carrying `TAG`, `PO-Legacy`, `QB-Legacy`, `QR-Legacy`, `AG-Legacy`, `SGL`, `TaskManager`, `POM`. This aligns with one API key per scraper: the key and the `application:*` tag identify the same actor.
-- **`"QuoteAgreementHardwareStorare"` is a typo** for `Storage`. The SDK constants mirror the real value, typo included, or they stop matching. Fixing it is another retag — **open question, listed below.**
+- **`"QuoteAgreementHardwareStorare"` is a typo** for `Storage`, confirmed during review, and is
+  corrected (see §5.1). The SDK constant carries the corrected value.
+
+### 5.1 Correcting the seeded catalog
+
+Two corrections were confirmed during review: remove `Attachments` from `entityType`, and fix
+`QuoteAgreementHardwareStorare` to `QuoteAgreementHardwareStorage`.
+
+**Editing `TagCategorySeedData.cs` alone does not fix QA or Production.**
+`ProxiesDbInitializer.SeedTagCategoriesAsync` short-circuits on `if (await
+dbContext.TagCategories.AnyAsync(...)) return;` — it seeds only into an empty catalog. The source
+change therefore reaches fresh environments only; deployed ones need an explicit data correction.
+
+That correction needs no migration: the `AddTagCategoryValue` / `RemoveTagCategoryValue` endpoints
+already exist and are reachable from the admin UI. Three steps per environment (QA, Production):
+
+1. Remove value `Attachments` from category `entityType`.
+2. Remove value `QuoteAgreementHardwareStorare` from `entityType`; add `QuoteAgreementHardwareStorage`.
+3. Verify no proxy is already tagged `entitytype:attachments` or
+   `entitytype:quoteagreementhardwarestorare`. The catalog has **no foreign key** to `Tag` or
+   `ProxyTagAssignment` by design, so removing a catalog value silently leaves any already-assigned
+   tag in place — and such a tag would then match nothing anyone asks for. Re-tag those proxies if
+   any exist.
+
+Step 3 should be cheap right now, since proxy tagging has not started in earnest. It gets expensive
+later, which is the argument for doing this before phase 3 rather than after.
 
 ---
 
@@ -314,12 +343,17 @@ The **API key travels in an environment variable** (`FSPROXY_APIKEY`), never in 
 
 Note: this fork has **no `.github/`** — the CI workflows described in `AGENTS.md` belong to the upstream template. Confirm `dotnet test src/FS.Proxy.slnx` picks up the multi-targeted project.
 
+**Documentation lives in this repository.** `AGENTS.md` golden rule 10 points at the upstream Astro
+docs repo (`github.com/fullstackhero/docs`); that rule belongs to the project this template was
+derived from and does not apply here. SDK documentation and its changelog ship with the code.
+
 ---
 
 ## 10. Delivery phases
 
 | # | Deliverable | Depends on |
 |---|---|---|
+| 0 | Catalog corrections (§5.1), source + QA + Production | — |
 | 1 | `/feedback/batch` endpoint + contracts + tests | — |
 | 2 | SDK core: level 0, pool, feedback, file cache, `ProxyTags`. Publish preview to the feed | 1 |
 | 3 | TAG integration: `ProxyInfo.ProxyId`, `LoadWebScraperConfiguration`, `RenewProxy` reports, tags per sub-section, Redis cache | 2 |
@@ -331,17 +365,19 @@ Phase 1 is independent and mergeable on its own. Phases 3 and 4 run in parallel.
 **Configuration work that blocks phase 3** (not code — start now):
 
 1. **Create one API key per scraper** via `CreateApiClient`, in QA and Production.
-2. **Tag the proxies** against the existing five-dimension catalog. Today's pools (`(root)`, `Tender-Attachments`, `PurchaseOrder`) must become explicit tag sets, and proxies must be labelled in the admin UI. Phase 3 has nothing to point at until this is done.
+2. **Tag the proxies** against the five-dimension catalog, *after* the phase 0 corrections land.
+   Today's pools (`(root)`, `Tender-Attachments`, `PurchaseOrder`) become explicit tag combinations,
+   and proxies are labelled in the admin UI. Phase 3 has nothing to point at until this is done.
 
 ---
 
-## Open questions
+## Resolved during review
 
-1. **Seed typo `"QuoteAgreementHardwareStorare"`** — fix it (costs a retag of any proxy already carrying it) or keep it and mirror the typo in the SDK constants?
-2. **`Attachments` under two categories.** The seed carries it in both `entityType` and
-   `operationType`. Pick one as canonical for proxy tagging (this spec assumes `entityType`), or
-   remove the duplicate from the catalog.
-3. **Documentation target.** `AGENTS.md` golden rule 10 points at the upstream Astro docs repo (`github.com/fullstackhero/docs`) plus a changelog entry. Confirm whether that applies to this fork or whether the SDK documentation lives in this repository.
+1. **`Attachments` is `operationType` only.** The `entityType` duplicate is removed. An attachment
+   run is the combination `entitytype:tender` + `operationtype:attachments` (§1 Level 1, §5.1).
+2. **`QuoteAgreementHardwareStorare` is a typo** for `Storage` and is corrected (§5.1).
+3. **Documentation lives in this repository.** Golden rule 10's external docs repo belongs to the
+   upstream project, not this fork (§9).
 
 ## Follow-ups explicitly out of scope
 
