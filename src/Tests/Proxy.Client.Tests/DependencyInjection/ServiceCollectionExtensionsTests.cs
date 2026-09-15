@@ -97,4 +97,25 @@ public sealed class ServiceCollectionExtensionsTests
         Should.Throw<InvalidOperationException>(() =>
             services.AddFsProxyClient(Configuration(), options => options.PoolSize = 0));
     }
+
+    // Fix round 3, production defect: the ShutdownToken-wiring factory used to fall back to
+    // CancellationToken.None unconditionally whenever no IHostApplicationLifetime was registered —
+    // silently CLOBBERING a token the caller had already set via configureOptions. None of these
+    // tests register IHostApplicationLifetime (a bare ServiceCollection with no generic host behind
+    // it, exactly the scenario the bug hit), so this pins that an explicitly-configured token now
+    // survives resolution instead of being overwritten.
+    [Fact]
+    public async Task AddFsProxyClient_Without_IHostApplicationLifetime_Should_Preserve_A_ConfigureOptions_ShutdownToken()
+    {
+        var services = new ServiceCollection();
+        using var shutdownCts = new CancellationTokenSource();
+
+        services.AddFsProxyClient(Configuration(), options => options.ShutdownToken = shutdownCts.Token);
+        await using ServiceProvider provider = services.BuildServiceProvider();
+
+        var registeredOptions = provider.GetRequiredService<ProxyClientOptions>();
+
+        registeredOptions.ShutdownToken.ShouldBe(shutdownCts.Token,
+            "with no IHostApplicationLifetime registered, an explicitly-configured ShutdownToken must survive, not be reset to CancellationToken.None.");
+    }
 }

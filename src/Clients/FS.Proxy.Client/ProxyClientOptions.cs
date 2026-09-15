@@ -67,15 +67,35 @@ public sealed class ProxyClientOptions
     /// <summary>
     /// Fires on a DELIBERATE host shutdown — the only case <c>FsProxyRotationHandler</c> can actually
     /// tell apart from an ordinary <c>HttpClient.Timeout</c> firing. Defaults to
-    /// <see cref="CancellationToken.None"/> (never fires). Level 2's DI path
-    /// (<c>AddFsProxyClient</c>) wires this from <c>IHostApplicationLifetime.ApplicationStopping</c>
-    /// automatically when that service is registered; a Level-0/1 caller with its own shutdown signal
-    /// (or standalone Level-2 usage with no DI container) can set this by hand instead. See
-    /// <c>FsProxyRotationHandler</c>'s own remarks for why this exists: <c>HttpClient</c> links the
-    /// caller's own token with its <c>Timeout</c> into ONE token before a <c>DelegatingHandler</c> ever
-    /// sees it, so a cancelled <c>SendAsync</c> token is, from inside the handler, indistinguishable
-    /// from the proxy having gone silent — UNLESS this token specifically is the one that fired.
+    /// <see cref="CancellationToken.None"/> (never fires). See <c>FsProxyRotationHandler</c>'s own
+    /// remarks for why this exists: <c>HttpClient</c> links the caller's own token with its
+    /// <c>Timeout</c> into ONE token before a <c>DelegatingHandler</c> ever sees it, so a cancelled
+    /// <c>SendAsync</c> token is, from inside the handler, indistinguishable from the proxy having
+    /// gone silent — UNLESS this token specifically is the one that fired.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A Level-0/1 caller with its own shutdown signal (or standalone Level-2 usage with no DI
+    /// container) sets this by hand directly. Level 2's DI path (<c>AddFsProxyClient</c>) ALSO wires
+    /// it, from <c>IHostApplicationLifetime.ApplicationStopping</c> — but only when that service is
+    /// actually registered in the container. On a bare <c>ServiceCollection</c> with no generic host
+    /// behind it (a console app wiring DI up by hand, a worker outside
+    /// <c>Host.CreateDefaultBuilder</c>, a test harness), no
+    /// <c>IHostApplicationLifetime</c> is registered at all — in that case, whatever this property was
+    /// already set to (by hand, or via the <c>configureOptions</c> overload of
+    /// <c>AddFsProxyClient</c>) is left exactly as it was. It is NOT reset to
+    /// <see cref="CancellationToken.None"/> in that case: doing so would silently stop recognizing a
+    /// shutdown token the caller correctly identified, and every in-flight request that token then
+    /// cancelled would report <c>Timeout</c> against an otherwise-healthy proxy — the exact over-blame
+    /// direction this property exists to bound.
+    /// </para>
+    /// <para>
+    /// When an <c>IHostApplicationLifetime</c> IS registered, its <c>ApplicationStopping</c> wins
+    /// unconditionally over whatever this property already held, including a value set through
+    /// <c>configureOptions</c> — the DI path assumes that when a real host lifetime is present, its own
+    /// shutdown signal is the authoritative one.
+    /// </para>
+    /// </remarks>
     public CancellationToken ShutdownToken { get; set; } = CancellationToken.None;
 
     public void Validate()

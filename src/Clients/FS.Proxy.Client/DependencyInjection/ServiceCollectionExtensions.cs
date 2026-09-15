@@ -114,11 +114,25 @@ public static class ServiceCollectionExtensions
         // to already be set on the shared instance by the time anything reads it, regardless of
         // resolution order. GetService (not GetRequiredService): IHostApplicationLifetime is only
         // registered by the generic host — a caller using this DI extension without one (a plain
-        // ServiceCollection in a non-host app, e.g. a test) still gets a working ProxyClientOptions,
-        // just with ShutdownToken left at its CancellationToken.None default.
+        // ServiceCollection in a non-host app, e.g. a console/worker/test harness) still gets a
+        // working ProxyClientOptions.
+        //
+        // `?? options.ShutdownToken`, NOT `?? CancellationToken.None`: a bare `??
+        // CancellationToken.None` here would silently CLOBBER a token the caller already set — either
+        // ProxyClientOptions.ShutdownToken's own non-None default (there isn't one today, but a future
+        // caller-supplied ProxyClientOptions might set one before ever reaching this method) or,
+        // reachable today, one set through the `configureOptions` overload above — the instant no
+        // IHostApplicationLifetime happens to be registered. That is exactly the over-blame direction
+        // the CRITICAL fix this token exists for was scoped to bound: a shutdown-in-progress token the
+        // caller correctly identified would stop being recognized as one, and every in-flight request
+        // cancelled by it would report Timeout against an otherwise-healthy proxy. Falling back to the
+        // value already on `options` instead means "no lifetime service found" leaves whatever was
+        // already configured untouched. When a lifetime IS found, its ApplicationStopping still wins
+        // unconditionally over whatever was already configured — see ProxyClientOptions.ShutdownToken's
+        // own remarks for that precedence spelled out from the caller's side.
         services.AddSingleton(sp =>
         {
-            options.ShutdownToken = sp.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? CancellationToken.None;
+            options.ShutdownToken = sp.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? options.ShutdownToken;
             return options;
         });
         services.AddSingleton<IProxySource>(sp =>
