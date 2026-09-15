@@ -95,6 +95,33 @@ public sealed class FsProxyRotationHandlerTests
         }
     }
 
+    /// <summary>
+    /// Returns a caller-controlled, not-yet-completed <see cref="Task{TResult}"/> from SendAsync — lets
+    /// a test hold a send "in flight" indefinitely and complete it on demand. Records whether Dispose
+    /// was ever called while that task was still incomplete, which is the direct, deterministic proof
+    /// that eviction did NOT tear down a handler a request was still using.
+    /// </summary>
+    private sealed class BlockingHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource<HttpResponseMessage> _tcs;
+
+        public BlockingHandler(TaskCompletionSource<HttpResponseMessage> tcs) => _tcs = tcs;
+
+        public bool DisposedWhileStillInFlight { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => _tcs.Task;
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !_tcs.Task.IsCompleted)
+            {
+                DisposedWhileStillInFlight = true;
+            }
+
+            base.Dispose(disposing);
+        }
+    }
+
     // 1. The handler sets the request's proxy and sends: prove the exact HttpRequestMessage the
     // caller handed to SendAsync is the one that reaches the handler built FOR THE LEASED PROXY,
     // not some other path — a test that only checked "Lease was called" could pass even if the
@@ -440,5 +467,71 @@ public sealed class FsProxyRotationHandlerTests
         handlersByEndpointId.Count.ShouldBe(capacity + 1);
         handlersByEndpointId[endpoints[0].Id].Disposed.ShouldBeTrue();
         handlersByEndpointId[endpoints[^1].Id].Disposed.ShouldBeFalse();
+    }
+
+    // Fix round 2: the eviction test above is sequential — every send completes before the next one
+    // starts — so it cannot catch the actual bug reported against fix round 1: eviction disposing a
+    // handler a request is STILL sending through. This test overlaps them for real: starts a send that
+    // blocks on a TaskCompletionSource this test controls, leases enough distinct proxies while that
+    // send is still pending to push the blocked proxy's entry out as the least-recently-used eviction
+    // victim, then completes the blocked send and asserts it still succeeded — and, the direct proof,
+    // that its handler was never disposed while the send was still in flight.
+    [Fact]
+    public async Task SendAsync_Should_Not_Dispose_An_In_Flight_Handler_Even_Under_Eviction_Pressure()
+    {
+        int capacity = FsProxyRotationHandler.MaxCachedInvokers;
+        ProxyEndpoint blockingProxy = Endpoint("203.0.113.200");
+        var blockingTcs = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockingHandler = new BlockingHandler(blockingTcs);
+
+        var fillerEndpoints = new List<ProxyEndpoint>();
+        for (int i = 0; i < capacity; i++)
+        {
+            fillerEndpoints.Add(Endpoint("203.0.113." + (100 + (i % 100))));
+        }
+
+        var source = Substitute.For<IProxySource>();
+        source.Lease(Arg.Any<string[]>()).Returns(blockingProxy, fillerEndpoints.ToArray());
+
+        using var sut = new FsProxyRotationHandler(source, ["country:cl"], classifyResponse: null,
+            perProxyHandlerFactory: ep => ep.Id == blockingProxy.Id
+                ? blockingHandler
+                : new RecordingHandler(HttpStatusCode.OK));
+        using var invoker = new HttpMessageInvoker(sut, disposeHandler: false);
+
+        // Starts the send but does not await it: FsProxyRotationHandler.SendAsync runs synchronously
+        // (Lease, cache lookup, entering the per-proxy invoker's SendAsync) right up until it awaits
+        // blockingTcs.Task, which is not yet completed — so by the time this line returns, the blocking
+        // proxy's cache entry exists and is claimed (in-flight) exactly as it would be for a real,
+        // slow-to-answer portal.
+        using var blockingRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.test/slow");
+        // CA2025 flags "started but not immediately awaited" as a general disposal-ordering risk — but
+        // that is the entire point of this test: it deliberately starts the send and awaits it later
+        // (after blockingTcs.SetResult below), by which point blockingRequest is still alive (its
+        // `using` does not end until the test method returns).
+#pragma warning disable CA2025
+        Task<HttpResponseMessage> blockingSend = invoker.SendAsync(blockingRequest, CancellationToken.None);
+#pragma warning restore CA2025
+
+        // Leases and sends through `capacity` MORE distinct proxies while the blocking send is still
+        // pending — enough to push the cache from 1 (the blocking entry) to capacity + 1, forcing
+        // eviction to pick the blocking entry (the only one never touched again, hence the global
+        // least-recently-used) as its victim, while it is still in flight.
+        foreach (ProxyEndpoint _ in fillerEndpoints)
+        {
+            using var fillerRequest = new HttpRequestMessage(HttpMethod.Get, "https://example.test/filler");
+            await invoker.SendAsync(fillerRequest, CancellationToken.None);
+        }
+
+        blockingTcs.SetResult(new HttpResponseMessage(HttpStatusCode.OK));
+        HttpResponseMessage blockingResponse = await blockingSend;
+
+        blockingResponse.StatusCode.ShouldBe(HttpStatusCode.OK);
+        blockingHandler.DisposedWhileStillInFlight.ShouldBeFalse();
+        // The proxy that answered slowly still answered correctly — it must be reported as Success,
+        // never as a Failure manufactured by this handler's own eviction disposing its transport out
+        // from under it.
+        source.Received(1).Report(blockingProxy.Id, ProxyOutcome.Success, Arg.Any<string?>());
+        source.DidNotReceive().Report(blockingProxy.Id, ProxyOutcome.Failure, Arg.Any<string?>());
     }
 }

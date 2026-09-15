@@ -44,7 +44,9 @@ namespace FSH.Proxy.Client.Http;
 /// are all silently skipped for that request. Request/response logging, correlation-id propagation,
 /// and any Polly resilience policy wired onto the client's builder simply do not run while a proxy is
 /// in play. <see cref="DelegatingHandler.InnerHandler"/> is used only for the no-proxy-available
-/// fallback (behaviour 7) — see <see cref="SendDirectAsync"/>.
+/// fallback (behaviour 7) — see <see cref="SendDirectAsync"/>. Eviction from the bounded cache is
+/// reference-counted so it can never dispose a handler a request is still sending through — see
+/// <see cref="GetOrCreateEntry"/> and <see cref="EvictLeastRecentlyUsedIfOverCapacity"/>.
 /// </description>
 /// </item>
 /// <item>
@@ -251,14 +253,19 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
 
     /// <inheritdoc />
     /// <remarks>
-    /// Two independent try/catch blocks, deliberately not one: the first attributes a transport
-    /// failure (the actual network attempt through the leased proxy) to that proxy; the second
-    /// evaluates <c>classifyResponse</c> completely outside that attribution — a bug in caller-supplied
-    /// classification code must never be reported as a fault of a proxy that just delivered a response
-    /// perfectly correctly. If classification itself throws, nothing is reported for this attempt (not
-    /// even a fallback classification — a broken classifier deserves a loud failure so the caller
-    /// notices and fixes it, not a silently degraded signal), the response is disposed since it will
-    /// never reach the caller, and the classifier's own exception propagates unchanged.
+    /// Two independent try/catch blocks around the send itself, deliberately not one: the first
+    /// attributes a transport failure (the actual network attempt through the leased proxy) to that
+    /// proxy; the second evaluates <c>classifyResponse</c> completely outside that attribution — a bug
+    /// in caller-supplied classification code must never be reported as a fault of a proxy that just
+    /// delivered a response perfectly correctly. If classification itself throws, nothing is reported
+    /// for this attempt (not even a fallback classification — a broken classifier deserves a loud
+    /// failure so the caller notices and fixes it, not a silently degraded signal), the response is
+    /// disposed since it will never reach the caller, and the classifier's own exception propagates
+    /// unchanged. Both of those live inside an outer <c>try</c>/<c>finally</c> whose only job is
+    /// releasing this attempt's claim on the cache entry (see <see cref="GetOrCreateEntry"/>) exactly
+    /// once, on every exit path — success, a proxy-attributed failure, or a classifier bug — so a
+    /// concurrent <see cref="EvictLeastRecentlyUsedIfOverCapacity"/> pass can never dispose the handler
+    /// this call is still using.
     /// </remarks>
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -276,43 +283,53 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
             return await SendDirectAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
-        HttpMessageInvoker invoker = GetOrCreateInvoker(proxy);
-        HttpResponseMessage response;
+        CacheEntry entry = GetOrCreateEntry(proxy);
+        try
+        {
+            HttpMessageInvoker invoker = entry.Invoker.Value;
+            HttpResponseMessage response;
 
-        // Attributes ONLY a failure of the actual send through this proxy. Catching the general
-        // Exception type is deliberate, not a shortcut: ProxyOutcomeClassifier.FromException already
-        // has a considered answer (Failure) for whatever it does not specifically recognize, and this
-        // handler's whole contract is "observe, never change control flow" — swallowing here instead of
-        // rethrowing would silently turn a real transport failure into an apparent success at the caller.
+            // Attributes ONLY a failure of the actual send through this proxy. Catching the general
+            // Exception type is deliberate, not a shortcut: ProxyOutcomeClassifier.FromException already
+            // has a considered answer (Failure) for whatever it does not specifically recognize, and this
+            // handler's whole contract is "observe, never change control flow" — swallowing here instead of
+            // rethrowing would silently turn a real transport failure into an apparent success at the caller.
 #pragma warning disable CA1031
-        try
-        {
-            response = await invoker.SendAsync(request, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _source.Report(proxy.Id, ProxyOutcomeClassifier.FromException(ex), ex.Message);
-            throw;
-        }
+            try
+            {
+                response = await invoker.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _source.Report(proxy.Id, ProxyOutcomeClassifier.FromException(ex), ex.Message);
+                throw;
+            }
 #pragma warning restore CA1031
 
-        // Deliberately a SEPARATE try, outside the one above — see this method's own remarks and the
-        // type's remarks ("Reporting, not control flow") for why a classifyResponse bug must never be
-        // attributed to the proxy that just answered correctly.
+            // Deliberately a SEPARATE try, outside the one above — see this method's own remarks and the
+            // type's remarks ("Reporting, not control flow") for why a classifyResponse bug must never be
+            // attributed to the proxy that just answered correctly.
 #pragma warning disable CA1031 // Same reasoning as above: must catch whatever classifyResponse can
-        // throw, not just anticipated types, and it always rethrows — never swallows.
-        try
-        {
-            ProxyOutcome outcome = ProxyOutcomeClassifier.FromResponse(response, _classifyResponse);
-            _source.Report(proxy.Id, outcome);
-            return response;
-        }
-        catch (Exception)
-        {
-            response.Dispose();
-            throw;
-        }
+            // throw, not just anticipated types, and it always rethrows — never swallows.
+            try
+            {
+                ProxyOutcome outcome = ProxyOutcomeClassifier.FromResponse(response, _classifyResponse);
+                _source.Report(proxy.Id, outcome);
+                return response;
+            }
+            catch (Exception)
+            {
+                response.Dispose();
+                throw;
+            }
 #pragma warning restore CA1031
+        }
+        finally
+        {
+            // Releases this attempt's claim on `entry` — see GetOrCreateEntry's remarks. Must run on
+            // every exit path above (return OR throw), which is exactly what `finally` guarantees.
+            ReleaseInFlight(entry);
+        }
     }
 
     /// <summary>
@@ -342,54 +359,158 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
     }
 
     /// <summary>
-    /// Looks up (or, on first sight of this proxy, builds) the cached <see cref="HttpMessageInvoker"/>
-    /// for <paramref name="endpoint"/>'s <see cref="ProxyEndpoint.Id"/>, touches its recency stamp, and
-    /// — only when this call just added a brand-new entry — checks whether the cache is now over
-    /// <see cref="MaxCachedInvokers"/> and evicts the least-recently-used entries if so.
+    /// Looks up (or, on first sight of this proxy, builds) the cache entry for
+    /// <paramref name="endpoint"/>'s <see cref="ProxyEndpoint.Id"/>, safely claims it for the duration
+    /// of one send (see remarks), touches its recency stamp, and — only when this call just added a
+    /// brand-new entry — checks whether the cache is now over <see cref="MaxCachedInvokers"/> and
+    /// evicts the least-recently-used entries if so. The caller MUST pair every returned entry with
+    /// exactly one <see cref="ReleaseInFlight"/> call, on every exit path (a <c>finally</c> — see
+    /// <see cref="SendAsync"/>).
     /// </summary>
     /// <remarks>
-    /// The factory passed to <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>
-    /// can run more than once under a race for the same brand-new key, with every result but the winner
-    /// silently discarded — wrapping the actual <see cref="HttpMessageInvoker"/> construction in a
-    /// <see cref="Lazy{T}"/> (rather than constructing it directly inside that factory) means only the
-    /// single <see cref="Lazy{T}"/> instance that wins the race ever has its value factory invoked, so
-    /// at most one <see cref="HttpMessageInvoker"/> (and the connection pool and socket state it owns)
-    /// is ever actually built per proxy, regardless of how many raced, discarded <see cref="CacheEntry"/>/
-    /// <see cref="Lazy{T}"/> wrapper objects existed only momentarily. The 3-arg
-    /// <c>GetOrAdd(key, factory, arg)</c> overload — which would let the factory stay <see langword="static"/>
-    /// and avoid the closures below — is not available on netstandard2.0's <c>ConcurrentDictionary</c>.
+    /// <para>
+    /// <b>Fix-round 2: the previous version of this cache could dispose a handler a request was still
+    /// sending through.</b> Recency alone was stamped once, at lease time; nothing marked an entry as
+    /// "in use" for the (potentially long — a slow portal, a hung captcha challenge, a large body)
+    /// duration of the actual <c>await invoker.SendAsync(...)</c>. If enough distinct new proxies were
+    /// leased during that window to push the cache over <see cref="MaxCachedInvokers"/>,
+    /// <see cref="EvictLeastRecentlyUsedIfOverCapacity"/> could legitimately pick that in-flight entry
+    /// as the global least-recently-used victim and dispose it mid-send — the resulting
+    /// <see cref="ObjectDisposedException"/> would be reported as <see cref="ProxyOutcome.Failure"/>
+    /// against a proxy that did nothing wrong, exactly the misattribution this whole SDK exists to
+    /// prevent, reintroduced by the machinery that fixed a different problem (see
+    /// <see cref="MaxCachedInvokers"/>'s own remarks).
+    /// </para>
+    /// <para>
+    /// <b>The fix: reference-count each entry, remove-before-dispose on eviction.</b>
+    /// <see cref="CacheEntry.InFlightCount"/> tracks how many sends are currently using an entry.
+    /// <see cref="EvictLeastRecentlyUsedIfOverCapacity"/> always removes a victim from the dictionary
+    /// FIRST — from that point on, no new caller can ever obtain that exact <see cref="CacheEntry"/>
+    /// instance again (a <see cref="ConcurrentDictionary{TKey,TValue}.GetOrAdd(TKey,Func{TKey,TValue})"/>
+    /// for the same key now simply builds a fresh replacement), so <see cref="CacheEntry.InFlightCount"/>
+    /// can only ever go DOWN from there — and only disposes immediately if that count already reads
+    /// zero; otherwise it marks <see cref="CacheEntry.Evicted"/> and leaves the actual dispose to
+    /// whichever <see cref="ReleaseInFlight"/> call is the one whose decrement is the last to reach
+    /// zero (see <see cref="TryDisposeIfEvictedAndDrained"/> — its own <c>CompareExchange</c> guards
+    /// against more than one caller performing that final dispose).
+    /// </para>
+    /// <para>
+    /// <b>One narrower race remained even with that, and this method closes it too.</b> A caller can
+    /// obtain an existing <see cref="CacheEntry"/> from <c>GetOrAdd</c> a moment BEFORE eviction removes
+    /// that exact entry, and only increment <see cref="CacheEntry.InFlightCount"/> — its claim — a
+    /// moment AFTER eviction already found the count at zero and disposed it. A bare "fetch, then
+    /// increment" cannot see this coming. This method closes it with a claim-then-verify retry loop
+    /// instead: increment the claim FIRST, then check <see cref="CacheEntry.Evicted"/>. If it is still
+    /// <see langword="false"/>, the claim landed on a still-live entry and this method returns it
+    /// normally. If it is <see langword="true"/>, this exact entry was concurrently evicted between
+    /// <c>GetOrAdd</c> returning it and the claim landing — the claim is released (via
+    /// <see cref="ReleaseInFlight"/>, which may be what finally lets the evicting thread's deferred
+    /// dispose fire) and the whole lookup retries from <c>GetOrAdd</c>, which by then can only find a
+    /// fresh, uncontested entry. Every read/write of <see cref="CacheEntry.Evicted"/>,
+    /// <see cref="CacheEntry.InFlightCount"/>, and <see cref="CacheEntry.DisposeStarted"/> goes through
+    /// <see cref="Interlocked"/>/<see cref="Volatile"/>, which is what makes "claim, then re-check"
+    /// actually race-free rather than merely narrowing the window: whichever of two racing threads'
+    /// writes lands last is always the one the other side's subsequent read observes.
+    /// </para>
+    /// <para>
+    /// The factory passed to <c>GetOrAdd</c> can itself run more than once under a race for the same
+    /// brand-new key, with every result but the winner silently discarded — wrapping the actual
+    /// <see cref="HttpMessageInvoker"/> construction in a <see cref="Lazy{T}"/> (rather than
+    /// constructing it directly inside that factory) means only the single <see cref="Lazy{T}"/>
+    /// instance that wins the race ever has its value factory invoked. The 3-arg
+    /// <c>GetOrAdd(key, factory, arg)</c> overload — which would let the factory stay
+    /// <see langword="static"/> and avoid the closures below — is not available on netstandard2.0's
+    /// <c>ConcurrentDictionary</c>.
+    /// </para>
     /// </remarks>
-    private HttpMessageInvoker GetOrCreateInvoker(ProxyEndpoint endpoint)
+    private CacheEntry GetOrCreateEntry(ProxyEndpoint endpoint)
     {
         Func<ProxyEndpoint, HttpMessageHandler> perProxyHandlerFactory = _perProxyHandlerFactory;
-        bool created = false;
-        CacheEntry entry = _invokers.GetOrAdd(endpoint.Id, _ =>
-        {
-            created = true;
-            return new CacheEntry(new Lazy<HttpMessageInvoker>(() => new HttpMessageInvoker(perProxyHandlerFactory(endpoint), disposeHandler: true)));
-        });
 
-        // A monotonically increasing sequence number, not a wall-clock timestamp: many leases can land
-        // within the same clock tick under load, which would make "least recently used" ties resolve
-        // arbitrarily. A per-handler Interlocked counter never ties.
-        Interlocked.Exchange(ref entry.LastUsedSequence, Interlocked.Increment(ref _sequence));
-
-        if (created)
+        while (true)
         {
-            EvictLeastRecentlyUsedIfOverCapacity();
+            bool created = false;
+            CacheEntry entry = _invokers.GetOrAdd(endpoint.Id, _ =>
+            {
+                created = true;
+                return new CacheEntry(new Lazy<HttpMessageInvoker>(() => new HttpMessageInvoker(perProxyHandlerFactory(endpoint), disposeHandler: true)));
+            });
+
+            // Claim FIRST, then verify the claim actually landed on a still-live entry — see this
+            // method's own remarks for the narrow race this two-step protocol closes.
+            Interlocked.Increment(ref entry.InFlightCount);
+
+            if (Volatile.Read(ref entry.Evicted) == 0)
+            {
+                // A monotonically increasing sequence number, not a wall-clock timestamp: many leases
+                // can land within the same clock tick under load, which would make "least recently
+                // used" ties resolve arbitrarily. A per-handler Interlocked counter never ties.
+                Interlocked.Exchange(ref entry.LastUsedSequence, Interlocked.Increment(ref _sequence));
+
+                if (created)
+                {
+                    EvictLeastRecentlyUsedIfOverCapacity();
+                }
+
+                return entry;
+            }
+
+            // Lost the race: EvictLeastRecentlyUsedIfOverCapacity already removed this exact entry
+            // from the dictionary between GetOrAdd returning it and our claim landing. Release the
+            // claim just taken and retry — GetOrAdd will now either find a fresh replacement some
+            // other caller already created, or build one itself.
+            ReleaseInFlight(entry);
         }
-
-        return entry.Invoker.Value;
     }
 
     /// <summary>
-    /// Best-effort cap enforcement: only ever called right after this handler's own
-    /// <see cref="GetOrCreateInvoker"/> call just added a brand-new cache entry, so it runs at most
-    /// once per distinct proxy this handler ever sees — never on every request. A concurrent burst of
-    /// distinct new proxies can cause more than one thread to compute an overlapping victim list at
-    /// once; each victim is removed via <see cref="ConcurrentDictionary{TKey,TValue}.TryRemove(TKey,out TValue)"/>,
-    /// which simply fails harmlessly for whichever thread loses that race — never a double-dispose.
+    /// Releases one claim taken by <see cref="GetOrCreateEntry"/> (either a completed send, or a claim
+    /// that lost the race against a concurrent eviction and is backing out to retry). Safe to call from
+    /// any thread; performs the deferred dispose itself if this happens to be the claim whose release
+    /// drains an already-evicted entry to zero.
     /// </summary>
+    private static void ReleaseInFlight(CacheEntry entry)
+    {
+        Interlocked.Decrement(ref entry.InFlightCount);
+        TryDisposeIfEvictedAndDrained(entry);
+    }
+
+    /// <summary>
+    /// Disposes <paramref name="entry"/>'s invoker if — and only if — it has been evicted AND no send
+    /// is currently using it, and guarantees that dispose happens at most once even when multiple
+    /// threads (the evicting thread and one or more draining <see cref="ReleaseInFlight"/> calls) can
+    /// all observe "evicted and drained" at effectively the same moment.
+    /// </summary>
+    private static void TryDisposeIfEvictedAndDrained(CacheEntry entry)
+    {
+        if (Volatile.Read(ref entry.Evicted) == 0 || Volatile.Read(ref entry.InFlightCount) != 0)
+        {
+            return;
+        }
+
+        // CompareExchange 0→1, not a plain flag check: exactly one of the (possibly several) threads
+        // that reach this point with both conditions true must win the transition to actually dispose.
+        if (Interlocked.CompareExchange(ref entry.DisposeStarted, 1, 0) == 0 && entry.Invoker.IsValueCreated)
+        {
+            entry.Invoker.Value.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Best-effort cap enforcement: only ever called right after <see cref="GetOrCreateEntry"/> just
+    /// added a brand-new cache entry, so it runs at most once per distinct proxy this handler ever
+    /// sees — never on every request.
+    /// </summary>
+    /// <remarks>
+    /// Removes each victim from the dictionary FIRST, before deciding whether to dispose it — see
+    /// <see cref="GetOrCreateEntry"/>'s own remarks for why that ordering is exactly what makes the
+    /// whole scheme race-free: once removed, a victim's <see cref="CacheEntry.InFlightCount"/> can only
+    /// ever go down, never back up, so checking it after removal is a safe, final answer rather than a
+    /// snapshot something else can immediately invalidate. A concurrent burst of distinct new proxies
+    /// can cause more than one thread to compute an overlapping victim list at once; each victim is
+    /// removed via <see cref="ConcurrentDictionary{TKey,TValue}.TryRemove(TKey,out TValue)"/>, which
+    /// simply fails harmlessly for whichever thread loses that race.
+    /// </remarks>
     private void EvictLeastRecentlyUsedIfOverCapacity()
     {
         int overflow = _invokers.Count - MaxCachedInvokers;
@@ -406,10 +527,13 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
 
         foreach (Guid key in victims)
         {
-            if (_invokers.TryRemove(key, out CacheEntry? removed) && removed.Invoker.IsValueCreated)
+            if (!_invokers.TryRemove(key, out CacheEntry? removed))
             {
-                removed.Invoker.Value.Dispose();
+                continue;
             }
+
+            Interlocked.Exchange(ref removed.Evicted, 1);
+            TryDisposeIfEvictedAndDrained(removed);
         }
     }
 
@@ -418,8 +542,13 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
     {
         if (disposing)
         {
-            // IsValueCreated guard: disposal must not force-construct (and then immediately throw
-            // away) a per-proxy handler that no request ever actually used.
+            // Unconditional, unlike eviction: this is the handler's own whole-instance teardown, not a
+            // capacity-driven eviction of one entry while the rest of the handler keeps serving other
+            // requests. Disposing an HttpClient/handler while a request is still in flight on another
+            // thread is a caller error this SDK cannot protect against regardless of what happens here
+            // (same as it always has been for HttpMessageHandler/HttpClient in general) — IsValueCreated
+            // guard: disposal must not force-construct (and then immediately throw away) a per-proxy
+            // handler that no request ever actually used.
             foreach (Lazy<HttpMessageInvoker> invoker in _invokers.Values.Select(entry => entry.Invoker).Where(invoker => invoker.IsValueCreated))
             {
                 invoker.Value.Dispose();
@@ -436,7 +565,7 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
         base.Dispose(disposing);
     }
 
-    /// <summary>One cached per-proxy invoker plus the recency bookkeeping <see cref="EvictLeastRecentlyUsedIfOverCapacity"/> needs.</summary>
+    /// <summary>One cached per-proxy invoker plus the recency and in-flight bookkeeping <see cref="GetOrCreateEntry"/>/<see cref="EvictLeastRecentlyUsedIfOverCapacity"/> need.</summary>
     private sealed class CacheEntry
     {
         public CacheEntry(Lazy<HttpMessageInvoker> invoker) => Invoker = invoker;
@@ -445,5 +574,14 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
 
         /// <summary>Set from <see cref="FsProxyRotationHandler._sequence"/> on every touch; read (and raced over) via <see cref="Interlocked"/> only.</summary>
         public long LastUsedSequence;
+
+        /// <summary>Number of sends currently claiming this entry — see <see cref="GetOrCreateEntry"/>/<see cref="ReleaseInFlight"/>. <see cref="Interlocked"/>/<see cref="Volatile"/> access only.</summary>
+        public int InFlightCount;
+
+        /// <summary>1 once <see cref="EvictLeastRecentlyUsedIfOverCapacity"/> has removed this entry from the dictionary; 0 while it is still a normal live cache member. <see cref="Interlocked"/>/<see cref="Volatile"/> access only.</summary>
+        public int Evicted;
+
+        /// <summary>Guards the one-time transition to actually disposing <see cref="Invoker"/> — see <see cref="TryDisposeIfEvictedAndDrained"/>. <see cref="Interlocked"/> access only.</summary>
+        public int DisposeStarted;
     }
 }
