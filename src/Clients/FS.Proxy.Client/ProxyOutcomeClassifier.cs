@@ -78,14 +78,18 @@ public static class ProxyOutcomeClassifier
         switch (exception)
         {
             // HttpClient's timeout surfaces as a cancelled task whose inner is a TimeoutException.
-            // A cancellation WITHOUT that inner is ambiguous from inside this method alone: it can
-            // be the caller's own shutdown (not the proxy's fault) or a genuine, proxy-unrelated
-            // cancellation. This classifier has no access to the CancellationToken that triggered
-            // it, so it cannot make that distinction here and falls back to Failure as a
-            // conservative default. A caller that DOES hold the token (e.g.
-            // FsProxyRotationHandler.SendAsync) must check token.IsCancellationRequested itself and
-            // skip calling Report entirely for its own cancellation, rather than rely on this method
-            // to recognize it — see that method's own remarks.
+            // A cancellation WITHOUT that inner is ambiguous from inside this method alone: it can be
+            // a deliberate shutdown (not the proxy's fault), HttpClient.Timeout itself — HttpClient
+            // links the caller's own token with its Timeout into ONE token before a
+            // DelegatingHandler ever sees it, so by the time a cancellation reaches a catch block
+            // upstream of this method, which of those two it "really" was is already lost — or some
+            // other proxy-unrelated cancellation. This classifier has no access to any
+            // CancellationToken at all, so it cannot make that distinction here and falls back to
+            // Failure as a conservative default. A caller that has a way to tell a deliberate
+            // shutdown apart from everything else (e.g. FsProxyRotationHandler.SendAsync, via a
+            // dedicated ProxyClientOptions.ShutdownToken) should make that call itself rather than
+            // relying on this method — see that type's own remarks for exactly why it deliberately
+            // does NOT route a cancellation through this method at all.
 #if !NET
             // netstandard2.0 (.NET Framework) divergence: HttpClient's timeout throws
             // TaskCanceledException with NO inner TimeoutException on this target — that inner was

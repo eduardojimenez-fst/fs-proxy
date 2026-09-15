@@ -151,6 +151,7 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
     private readonly Func<HttpResponseMessage, ProxyOutcome?>? _classifyResponse;
     private readonly Func<ProxyEndpoint, HttpMessageHandler> _perProxyHandlerFactory;
     private readonly Func<HttpMessageHandler> _directHandlerFactory;
+    private readonly CancellationToken _shutdownToken;
     private readonly ConcurrentDictionary<Guid, CacheEntry> _invokers = new();
 
     /// <summary>
@@ -171,8 +172,14 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
     /// Optional. Recognizes a soft block a status code cannot — see the type's remarks. Returning
     /// <see langword="null"/> falls through to the ordinary status-code classification.
     /// </param>
-    public FsProxyRotationHandler(IProxySource source, string[] tags, Func<HttpResponseMessage, ProxyOutcome?>? classifyResponse = null)
-        : this(source, tags, classifyResponse, perProxyHandlerFactory: null, directHandlerFactory: null)
+    /// <param name="shutdownToken">
+    /// Optional. Fires on a deliberate host shutdown — the only cancellation source this handler can
+    /// actually tell apart from <c>HttpClient.Timeout</c>. See <see cref="ProxyClientOptions.ShutdownToken"/>
+    /// and this type's own remarks under "Cancellation" for why. Defaults to
+    /// <see cref="CancellationToken.None"/> (never fires) for a caller with no shutdown signal to wire up.
+    /// </param>
+    public FsProxyRotationHandler(IProxySource source, string[] tags, Func<HttpResponseMessage, ProxyOutcome?>? classifyResponse = null, CancellationToken shutdownToken = default)
+        : this(source, tags, classifyResponse, perProxyHandlerFactory: null, directHandlerFactory: null, shutdownToken)
     {
     }
 
@@ -188,7 +195,8 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
         string[] tags,
         Func<HttpResponseMessage, ProxyOutcome?>? classifyResponse,
         Func<ProxyEndpoint, HttpMessageHandler>? perProxyHandlerFactory,
-        Func<HttpMessageHandler>? directHandlerFactory = null)
+        Func<HttpMessageHandler>? directHandlerFactory = null,
+        CancellationToken shutdownToken = default)
     {
 #if NET
         ArgumentNullException.ThrowIfNull(source);
@@ -210,6 +218,7 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
         _classifyResponse = classifyResponse;
         _perProxyHandlerFactory = perProxyHandlerFactory ?? CreateDefaultPerProxyHandler;
         _directHandlerFactory = directHandlerFactory ?? CreateDefaultDirectHandler;
+        _shutdownToken = shutdownToken;
         _directInvoker = new Lazy<HttpMessageInvoker>(() => new HttpMessageInvoker(_directHandlerFactory(), disposeHandler: true));
     }
 
@@ -310,16 +319,40 @@ public sealed class FsProxyRotationHandler : DelegatingHandler
             }
             catch (Exception ex)
             {
-                // A cooperative cancellation of THIS call's own token — a graceful shutdown with
-                // requests still in flight is the common case — is not the proxy's fault: it never
-                // reached a stage where the proxy could have done anything wrong. Reporting Failure
-                // here would blame a perfectly healthy proxy and quarantine it locally on every such
-                // shutdown, for every in-flight request. ProxyOutcomeClassifier.FromException cannot
-                // make this distinction itself (it has no access to the token — see its own
-                // remarks), so the check belongs here, at the one place that does. Still rethrown
+                // Round-2 correction: an EARLIER version of this handler skipped Report whenever the
+                // `cancellationToken` PARAMETER above was itself cancelled, reasoning that a cancelled
+                // caller-supplied token means "our own shutdown, not the proxy's fault." That reasoning
+                // doesn't hold: HttpClient does NOT hand a DelegatingHandler the caller's own token. It
+                // creates a linked CancellationTokenSource combining the caller's token WITH
+                // HttpClient.Timeout, and THAT linked token — not the caller's — is what `SendAsync`'s
+                // own `cancellationToken` parameter receives. So a cancelled `cancellationToken` here is,
+                // from this handler's position, indistinguishable from HttpClient.Timeout elapsing —
+                // exactly the spec's own "proxy accepted the connection and went silent" row, the single
+                // most valuable bad-proxy signal this SDK carries. Skipping Report on every cancellation
+                // (as the earlier version did) silently swallowed that signal: no policy-engine event, no
+                // local quarantine, and a dead proxy kept getting leased. It also means
+                // ProxyOutcomeClassifier's own Timeout branch (keyed on an inner TimeoutException) is
+                // effectively unreachable from this call site: that inner exception is attached by
+                // HttpClient ABOVE this handler, never inside the exception this catch actually sees.
+                //
+                // The one cancellation this handler CAN reliably tell apart from HttpClient.Timeout is a
+                // deliberate host shutdown — ProxyClientOptions.ShutdownToken, wired from
+                // IHostApplicationLifetime.ApplicationStopping by AddFsProxyClient. Only THAT token
+                // firing is treated as "not the proxy's fault, do not report anything." Any other
+                // cancellation reaching here is reported as Timeout, not the classifier's generic
+                // Failure default — deliberately not inferred from elapsed time against
+                // HttpClient.Timeout (the weakest of the options considered: it would misclassify a
+                // fast, deliberate per-call cancellation as Timeout too, and still cannot tell a real
+                // proxy timeout apart from a short caller-supplied per-request token). Still rethrown
                 // unchanged either way: this handler observes, it never changes control flow.
-                if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                if (ex is OperationCanceledException)
                 {
+                    if (_shutdownToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+
+                    _source.Report(proxy.Id, ProxyOutcome.Timeout, ex.Message);
                     throw;
                 }
 

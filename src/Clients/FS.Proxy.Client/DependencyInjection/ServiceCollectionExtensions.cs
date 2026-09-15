@@ -1,10 +1,12 @@
 #if NET
 using System;
 using System.Net.Http;
+using System.Threading;
 using FSH.Proxy.Client.Http;
 using FSH.Proxy.Client.Transport;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace FSH.Proxy.Client.DependencyInjection;
 
@@ -102,12 +104,29 @@ public static class ServiceCollectionExtensions
         options.Validate();
 
         services.AddHttpClient(TransportClientName);
-        services.AddSingleton(options);
+
+        // A factory, not a plain instance registration: ProxyClientOptions.ShutdownToken is wired
+        // from IHostApplicationLifetime.ApplicationStopping HERE, at first resolution, rather than at
+        // registration time above — IHostApplicationLifetime is itself a container service and is not
+        // resolvable until the container is actually built. Because ProxyClientOptions is a singleton,
+        // this factory runs exactly once no matter which consumer resolves it first (IProxySource's
+        // own factory below, or AddFsProxyRotation's handler factory) — so ShutdownToken is guaranteed
+        // to already be set on the shared instance by the time anything reads it, regardless of
+        // resolution order. GetService (not GetRequiredService): IHostApplicationLifetime is only
+        // registered by the generic host — a caller using this DI extension without one (a plain
+        // ServiceCollection in a non-host app, e.g. a test) still gets a working ProxyClientOptions,
+        // just with ShutdownToken left at its CancellationToken.None default.
+        services.AddSingleton(sp =>
+        {
+            options.ShutdownToken = sp.GetService<IHostApplicationLifetime>()?.ApplicationStopping ?? CancellationToken.None;
+            return options;
+        });
         services.AddSingleton<IProxySource>(sp =>
         {
+            var resolvedOptions = sp.GetRequiredService<ProxyClientOptions>();
             var httpClientFactory = sp.GetRequiredService<IHttpClientFactory>();
-            IProxyServiceClient client = new ProxyServiceClient(httpClientFactory.CreateClient(TransportClientName), options);
-            return new ProxySource(options, client);
+            IProxyServiceClient client = new ProxyServiceClient(httpClientFactory.CreateClient(TransportClientName), resolvedOptions);
+            return new ProxySource(resolvedOptions, client);
         });
 
         return services;
@@ -128,7 +147,11 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(tags);
 
-        return builder.AddHttpMessageHandler(sp => new FsProxyRotationHandler(sp.GetRequiredService<IProxySource>(), tags));
+        return builder.AddHttpMessageHandler(sp =>
+        {
+            var options = sp.GetRequiredService<ProxyClientOptions>();
+            return new FsProxyRotationHandler(sp.GetRequiredService<IProxySource>(), tags, classifyResponse: null, options.ShutdownToken);
+        });
     }
 }
 #endif

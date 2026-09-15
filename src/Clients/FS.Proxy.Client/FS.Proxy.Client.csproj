@@ -90,6 +90,11 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
     <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- IHostApplicationLifetime only, to wire ProxyClientOptions.ShutdownToken from
+         ApplicationStopping in AddFsProxyClient — Abstractions only, never the full
+         Microsoft.Extensions.Hosting package, which a DI-less caller (or one on a bare
+         ServiceCollection with no generic host) has no use for. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
   </ItemGroup>
 
   <!-- ProxySnapshot (Pool/) is internal on purpose — it is an implementation detail of ProxyPool,

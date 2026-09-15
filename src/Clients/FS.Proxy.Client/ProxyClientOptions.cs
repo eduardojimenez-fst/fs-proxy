@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using FSH.Proxy.Client.Caching;
 
 namespace FSH.Proxy.Client;
@@ -62,6 +63,20 @@ public sealed class ProxyClientOptions
     /// <see cref="IProxySnapshotCache"/>.
     /// </summary>
     public IProxySnapshotCache? SnapshotCache { get; set; }
+
+    /// <summary>
+    /// Fires on a DELIBERATE host shutdown — the only case <c>FsProxyRotationHandler</c> can actually
+    /// tell apart from an ordinary <c>HttpClient.Timeout</c> firing. Defaults to
+    /// <see cref="CancellationToken.None"/> (never fires). Level 2's DI path
+    /// (<c>AddFsProxyClient</c>) wires this from <c>IHostApplicationLifetime.ApplicationStopping</c>
+    /// automatically when that service is registered; a Level-0/1 caller with its own shutdown signal
+    /// (or standalone Level-2 usage with no DI container) can set this by hand instead. See
+    /// <c>FsProxyRotationHandler</c>'s own remarks for why this exists: <c>HttpClient</c> links the
+    /// caller's own token with its <c>Timeout</c> into ONE token before a <c>DelegatingHandler</c> ever
+    /// sees it, so a cancelled <c>SendAsync</c> token is, from inside the handler, indistinguishable
+    /// from the proxy having gone silent — UNLESS this token specifically is the one that fired.
+    /// </summary>
+    public CancellationToken ShutdownToken { get; set; } = CancellationToken.None;
 
     public void Validate()
     {

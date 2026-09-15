@@ -244,25 +244,78 @@ public sealed class FsProxyRotationHandlerTests
     // proxy's fault, and reporting Failure here would both quarantine a healthy proxy locally and
     // emit a false negative signal to the policy engine on every such shutdown. Still rethrown
     // unchanged: this handler observes, it never changes control flow.
-    // Note: test 5 above (SendAsync_Should_Report_Timeout_And_Rethrow_When_The_Send_Times_Out)
-    // already covers the companion case — a cancellation-shaped exception reported normally when the
-    // CALLER's own token (CancellationToken.None there) was never the one cancelled.
+    // Round 2 correction: HttpClient does NOT hand a DelegatingHandler the caller's own token — it
+    // links the caller's token WITH HttpClient.Timeout into ONE token before this handler ever sees
+    // it. So a cancelled `cancellationToken` parameter is, from in here, indistinguishable from
+    // HttpClient.Timeout elapsing — the single most valuable bad-proxy signal this SDK carries ("the
+    // proxy accepted the connection and went silent"). This test drives the handler the way a REAL
+    // HttpClient.Timeout actually would — a cancelled token, no ShutdownToken configured — and pins
+    // that it is reported as Timeout, not skipped and not Failure. The earlier (round-1) version of
+    // this test asserted DidNotReceive() here, which was exactly the bug this round fixes: it turned
+    // an over-reporting problem into an under-reporting one on the signal that matters most.
     [Fact]
-    public async Task SendAsync_Should_Not_Report_When_The_Callers_Own_Token_Was_Cancelled()
+    public async Task SendAsync_Should_Report_Timeout_For_A_Cancellation_Shaped_The_Way_HttpClient_Actually_Produces_One()
     {
         ProxyEndpoint proxy = Endpoint();
         IProxySource source = FakeSourceLeasing(proxy);
         using var cts = new CancellationTokenSource();
-        var thrower = new ThrowingHandler(new OperationCanceledException("shutting down", cts.Token));
+        var thrower = new ThrowingHandler(new OperationCanceledException("linked token cancelled", cts.Token));
         using var sut = new FsProxyRotationHandler(source, ["country:cl"], classifyResponse: null,
             perProxyHandlerFactory: _ => thrower);
         using var invoker = new HttpMessageInvoker(sut, disposeHandler: false);
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.test/page");
         await cts.CancelAsync();
 
+        // No ShutdownToken configured (defaults to CancellationToken.None) — this is deliberately the
+        // shape neither of the two existing cancellation tests could catch: both drive the handler
+        // with a token HttpClient would never actually have handed it (CancellationToken.None, or a
+        // token this test itself never cancels for the "genuine timeout" case).
         await Should.ThrowAsync<OperationCanceledException>(() => invoker.SendAsync(request, cts.Token));
 
+        source.Received(1).Report(proxy.Id, ProxyOutcome.Timeout, Arg.Any<string?>());
+    }
+
+    // The one cancellation this handler CAN reliably tell apart from HttpClient.Timeout: a deliberate
+    // host shutdown, via a dedicated ProxyClientOptions.ShutdownToken (wired from
+    // IHostApplicationLifetime.ApplicationStopping by AddFsProxyClient — see
+    // ServiceCollectionExtensions). Only THAT token firing suppresses Report entirely.
+    [Fact]
+    public async Task SendAsync_Should_Not_Report_When_The_Configured_Shutdown_Token_Has_Fired()
+    {
+        ProxyEndpoint proxy = Endpoint();
+        IProxySource source = FakeSourceLeasing(proxy);
+        using var shutdownCts = new CancellationTokenSource();
+        var thrower = new ThrowingHandler(new OperationCanceledException("host is shutting down"));
+        using var sut = new FsProxyRotationHandler(source, ["country:cl"], classifyResponse: null,
+            perProxyHandlerFactory: _ => thrower, shutdownToken: shutdownCts.Token);
+        using var invoker = new HttpMessageInvoker(sut, disposeHandler: false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.test/page");
+        await shutdownCts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => invoker.SendAsync(request, CancellationToken.None));
+
         source.DidNotReceive().Report(Arg.Any<Guid>(), Arg.Any<ProxyOutcome>(), Arg.Any<string?>());
+    }
+
+    // Companion: a ShutdownToken configured but NOT yet fired must not suppress reporting — the
+    // handler checks whether shutdown has actually happened, not merely whether one was configured.
+    [Fact]
+    public async Task SendAsync_Should_Still_Report_Timeout_When_A_Shutdown_Token_Is_Configured_But_Not_Fired()
+    {
+        ProxyEndpoint proxy = Endpoint();
+        IProxySource source = FakeSourceLeasing(proxy);
+        using var shutdownCts = new CancellationTokenSource(); // never cancelled
+        using var requestCts = new CancellationTokenSource();
+        var thrower = new ThrowingHandler(new OperationCanceledException("linked token cancelled", requestCts.Token));
+        using var sut = new FsProxyRotationHandler(source, ["country:cl"], classifyResponse: null,
+            perProxyHandlerFactory: _ => thrower, shutdownToken: shutdownCts.Token);
+        using var invoker = new HttpMessageInvoker(sut, disposeHandler: false);
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.test/page");
+        await requestCts.CancelAsync();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => invoker.SendAsync(request, requestCts.Token));
+
+        source.Received(1).Report(proxy.Id, ProxyOutcome.Timeout, Arg.Any<string?>());
     }
 
     // 6. A supplied classifyResponse returning Banned on a 200 wins over the status code — the
