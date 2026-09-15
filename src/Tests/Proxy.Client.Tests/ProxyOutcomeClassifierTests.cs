@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using FSH.Proxy.Client;
 using Shouldly;
@@ -10,6 +11,7 @@ public sealed class ProxyOutcomeClassifierTests
     [Theory]
     // The destination answered. The tunnel worked, whatever it said.
     [InlineData(HttpStatusCode.OK, ProxyOutcome.Success)]
+    [InlineData(HttpStatusCode.MovedPermanently, ProxyOutcome.Success)]
     [InlineData(HttpStatusCode.NotFound, ProxyOutcome.Success)]
     [InlineData(HttpStatusCode.BadRequest, ProxyOutcome.Success)]
     [InlineData(HttpStatusCode.InternalServerError, ProxyOutcome.Success)]
@@ -47,6 +49,15 @@ public sealed class ProxyOutcomeClassifierTests
         ProxyOutcomeClassifier.FromException(exception).ShouldBe(ProxyOutcome.Failure);
     }
 
+    [Fact]
+    public void FromException_Should_Return_Failure_For_An_Unmapped_Exception_Type()
+    {
+        // Any exception type not explicitly handled falls to the default case: Failure.
+        var exception = new InvalidOperationException("unknown error");
+
+        ProxyOutcomeClassifier.FromException(exception).ShouldBe(ProxyOutcome.Failure);
+    }
+
     [Theory]
     [InlineData(WebExceptionStatus.Timeout, ProxyOutcome.Timeout)]
     [InlineData(WebExceptionStatus.ConnectFailure, ProxyOutcome.Failure)]
@@ -76,5 +87,113 @@ public sealed class ProxyOutcomeClassifierTests
         using var response = new HttpResponseMessage(HttpStatusCode.Forbidden);
 
         ProxyOutcomeClassifier.FromResponse(response).ShouldBe(ProxyOutcome.Banned);
+    }
+
+    [Fact]
+    public void FromResponse_Should_Respect_The_Inspect_Override_Over_Status_Code()
+    {
+        // The most valuable signal a scraper has: a portal returning HTTP 200 with a captcha page.
+        // The custom inspector wins over the generic status-code rule.
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+
+        var result = ProxyOutcomeClassifier.FromResponse(response, _ => ProxyOutcome.Banned);
+
+        result.ShouldBe(ProxyOutcome.Banned);
+    }
+
+    [Fact]
+    public void FromResponse_Should_Fall_Through_To_Status_Code_When_Inspect_Returns_Null()
+    {
+        // The inspector can opt out by returning null, falling back to the generic rule.
+        using var response = new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+        var result = ProxyOutcomeClassifier.FromResponse(response, _ => null);
+
+        result.ShouldBe(ProxyOutcome.Banned);
+    }
+
+    [Fact]
+    public async Task FromException_Should_Classify_WebException_ProtocolError_With_Status_Code_From_HttpWebResponse()
+    {
+        // Critical for .NET Framework 4.8 scrapers: when a portal returns 403 over WebRequest,
+        // it surfaces as a WebException with ProtocolError status and an HttpWebResponse inner.
+        // If misclassified as Failure, the policy engine would prescribe the wrong remedy.
+
+        // Find a free port using TcpListener
+        var tcpListener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        tcpListener.Start();
+        var freePort = ((System.Net.IPEndPoint)tcpListener.LocalEndpoint).Port;
+        tcpListener.Stop();
+
+        var listener = new HttpListener();
+        listener.Prefixes.Add($"http://127.0.0.1:{freePort}/");
+
+        try
+        {
+            listener.Start();
+            var uri = new Uri($"http://127.0.0.1:{freePort}/test");
+
+            var listenerTask = Task.Run(async () =>
+            {
+                try
+                {
+                    var context = await listener.GetContextAsync();
+                    context.Response.StatusCode = 403;
+                    context.Response.Close();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Listener was closed before request came in, which is fine for the test.
+                }
+            });
+
+            WebException? caughtException = null;
+            try
+            {
+#pragma warning disable SYSLIB0014
+                var request = (HttpWebRequest)WebRequest.Create(uri);
+#pragma warning restore SYSLIB0014
+                request.Timeout = 5000;
+
+                try
+                {
+                    using var response = await request.GetResponseAsync();
+                }
+                catch (WebException ex)
+                {
+                    caughtException = ex;
+                }
+            }
+            finally
+            {
+                try
+                {
+                    await listenerTask;
+                }
+                catch (TaskCanceledException)
+                {
+                    // Task was cancelled, which is expected if the listener is stopped.
+                }
+            }
+
+            caughtException.ShouldNotBeNull();
+            caughtException.Status.ShouldBe(WebExceptionStatus.ProtocolError);
+            caughtException.Response.ShouldNotBeNull();
+
+            var result = ProxyOutcomeClassifier.FromException(caughtException);
+            result.ShouldBe(ProxyOutcome.Banned);
+        }
+        finally
+        {
+            try
+            {
+                listener.Stop();
+                listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already disposed, which is fine.
+            }
+        }
     }
 }
