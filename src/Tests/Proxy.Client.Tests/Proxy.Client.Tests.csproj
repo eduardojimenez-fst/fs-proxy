@@ -5,12 +5,7 @@
 		<AssemblyName>Proxy.Client.Tests</AssemblyName>
 		<IsPackable>false</IsPackable>
 		<IsTestProject>true</IsTestProject>
-		<!-- CA2016/CS8604: StubHandler and the Transport tests are pinned verbatim by the task brief.
-		     StubHandler's SendAsync intentionally does not forward its CancellationToken into
-		     ReadAsStringAsync (it is a canned-response test double, not real I/O), and
-		     ProxyServiceClientTests asserts on a nullable LastRequestBody via Shouldly's
-		     ShouldContain(string), which has no nullable overload. Both are test-only noise. -->
-		<NoWarn>$(NoWarn);CA1515;CA1861;CA1707;CA2000;CA2016;CS8604</NoWarn>
+		<NoWarn>$(NoWarn);CA1515;CA1861;CA1707;CA2000</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>

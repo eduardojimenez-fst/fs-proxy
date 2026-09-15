@@ -30,8 +30,10 @@ public sealed class ProxyServiceClientTests
         handler.LastRequest.RequestUri!.AbsolutePath.ShouldBe("/api/v1/proxies/request");
         // Tags must go out normalized — the server lowercases on its side, but sending the raw
         // form makes the request body a poor match for what the admin UI shows.
-        handler.LastRequestBody.ShouldContain("country:cl");
-        handler.LastRequestBody.ShouldContain("entitytype:tender");
+        // ProxyServiceClient always attaches a JSON body to a /request POST, so LastRequestBody is
+        // known non-null here — the null-forgiving operator reflects that, not a shrug at CS8604.
+        handler.LastRequestBody!.ShouldContain("country:cl");
+        handler.LastRequestBody!.ShouldContain("entitytype:tender");
         result.Count.ShouldBe(1);
         result[0].Host.ShouldBe("203.0.113.10");
         result[0].Password.ShouldBe("p");
@@ -79,8 +81,10 @@ public sealed class ProxyServiceClientTests
         handler.LastRequest!.RequestUri!.AbsolutePath.ShouldBe("/api/v1/proxies/feedback/batch");
         // The service registers JsonStringEnumConverter, so the outcome must go out as a NAME.
         // Sending the numeric value deserializes to the wrong member without any error.
-        handler.LastRequestBody.ShouldContain("\"Banned\"");
-        handler.LastRequestBody.ShouldContain(proxyId.ToString());
+        // ProxyServiceClient always attaches a JSON body to a /feedback/batch POST, so
+        // LastRequestBody is known non-null here.
+        handler.LastRequestBody!.ShouldContain("\"Banned\"");
+        handler.LastRequestBody!.ShouldContain(proxyId.ToString());
     }
 
     [Fact]

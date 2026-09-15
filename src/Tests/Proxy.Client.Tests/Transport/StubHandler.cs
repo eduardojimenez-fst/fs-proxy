@@ -24,7 +24,7 @@ internal sealed class StubHandler : HttpMessageHandler
         LastRequest = request;
         if (request.Content is not null)
         {
-            LastRequestBody = await request.Content.ReadAsStringAsync().ConfigureAwait(false);
+            LastRequestBody = await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return new HttpResponseMessage(_status) { Content = new StringContent(_body) };

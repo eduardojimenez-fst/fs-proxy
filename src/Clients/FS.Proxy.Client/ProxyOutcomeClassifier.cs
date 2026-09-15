@@ -48,7 +48,7 @@ public static class ProxyOutcomeClassifier
     /// </param>
     public static ProxyOutcome FromResponse(HttpResponseMessage response, Func<HttpResponseMessage, ProxyOutcome?>? inspect = null)
     {
-#if NET6_OR_GREATER
+#if NET
         ArgumentNullException.ThrowIfNull(response);
 #else
 #pragma warning disable CA1510
@@ -63,7 +63,7 @@ public static class ProxyOutcomeClassifier
     /// <summary>Classifies a thrown exception.</summary>
     public static ProxyOutcome FromException(Exception exception)
     {
-#if NET6_OR_GREATER
+#if NET
         ArgumentNullException.ThrowIfNull(exception);
 #else
 #pragma warning disable CA1510
