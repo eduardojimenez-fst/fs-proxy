@@ -19,7 +19,7 @@ public static class ReportProxyFeedbackBatchEndpoint
                     string? reporterIdentifier = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                     var result = await mediator.Send(
                         new ReportProxyFeedbackBatchCommand(body.Events, reporterIdentifier), ct);
-                    return Results.Ok(result);
+                    return TypedResults.Ok(result);
                 })
             .WithName("ReportProxyFeedbackBatch")
             .WithSummary("Report the outcome of using several proxies in a single call")

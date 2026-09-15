@@ -77,6 +77,29 @@ public sealed class ReportProxyFeedbackBatchHandlerTests
     }
 
     [Fact]
+    public async Task Handle_Should_EvaluatePolicyOnce_When_OneProxyHasBothSuccessAndNegativeOutcomes()
+    {
+        await using var db = CreateDb();
+        var proxy = NewProxy("1.1.1.1");
+        db.Proxies.Add(proxy);
+        await db.SaveChangesAsync();
+        var policyService = Substitute.For<IPolicyEvaluationService>();
+        var sut = new ReportProxyFeedbackBatchCommandHandler(db, policyService);
+
+        var events = new List<ProxyFeedbackEvent>
+        {
+            new(proxy.Id, UsageEventOutcome.Success, null),
+            new(proxy.Id, UsageEventOutcome.Banned, null),
+        };
+
+        var result = await sut.Handle(new ReportProxyFeedbackBatchCommand(events, null), CancellationToken.None);
+
+        result.Accepted.ShouldBe(2);
+        (await db.ProxyUsageEvents.CountAsync()).ShouldBe(2);
+        await policyService.Received(1).EvaluateAsync(proxy.Id, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
     public async Task Handle_Should_AcceptKnownProxies_And_RejectUnknownOnes()
     {
         await using var db = CreateDb();

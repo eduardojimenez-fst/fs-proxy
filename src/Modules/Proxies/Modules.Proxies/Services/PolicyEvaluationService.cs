@@ -9,9 +9,17 @@ namespace FSH.Modules.Proxies.Services;
 /// Evaluates a proxy's recent negative <see cref="ProxyUsageEvent"/> history against whichever
 /// <see cref="PolicyProfile"/> its tags resolve to (most-restrictive-wins when more than one tag
 /// maps to a profile), and disables — or disables-and-renews — it once the profile's threshold
-/// and distinct-reporter requirements are met. Called inline, immediately after any
-/// <see cref="ProxyUsageEvent"/> is persisted (the health-check job and the consumer feedback
-/// endpoint).
+/// and distinct-reporter requirements are met. Called inline, immediately after a
+/// <see cref="ProxyUsageEvent"/> is persisted, by three callers: the health-check job, the
+/// single-event consumer feedback endpoint, and the batched consumer feedback endpoint.
+///
+/// This service only counts events where <c>Outcome != Success</c> (see its own
+/// <c>negativeEvents</c> query below) — a proxy with nothing but successful events can never trip
+/// the threshold. The batch handler relies on that as a semantic guarantee: it deliberately skips
+/// calling <see cref="EvaluateAsync"/> for any proxy whose batch contained only <c>Success</c>
+/// outcomes, on the assumption that doing so is provably a no-op. If <see cref="EvaluateAsync"/>
+/// is ever changed to become sensitive to <c>Success</c> events, that skip in the batch handler
+/// will silently stop evaluating proxies it should evaluate.
 /// </summary>
 public sealed class PolicyEvaluationService(ProxiesDbContext dbContext, IProxyRenewalService renewalService) : IPolicyEvaluationService
 {

@@ -6,9 +6,9 @@ using Microsoft.AspNetCore.Authorization;
 namespace FSH.Modules.Proxies.Authentication;
 
 /// <summary>
-/// Authorizes the two consumer-facing endpoints (<c>POST /proxies/request</c> and
-/// <c>POST /proxies/{id}/feedback</c>), which accept either the "ApiKey" scheme or the app-wide
-/// JWT scheme.
+/// Authorizes the three consumer-facing endpoints (<c>POST /proxies/request</c>,
+/// <c>POST /proxies/{id}/feedback</c>, and <c>POST /proxies/feedback/batch</c>), which accept
+/// either the "ApiKey" scheme or the app-wide JWT scheme.
 ///
 /// The two legs are NOT equivalent. Presenting a valid API key already proves possession of an
 /// admin-issued, enabled <c>ApiClient</c> secret (see <see cref="ApiKeyAuthenticator"/>) — that
