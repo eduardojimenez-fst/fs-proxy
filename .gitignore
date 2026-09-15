@@ -536,3 +536,6 @@ clients/**/.env.local
 # literally named "bin\Debug" that the [Bb]in/ rule above does not match. Generating a migration
 # otherwise leaves a few MB of BuildHost binaries staged.
 **/bin\\Debug/
+
+# FS.Proxy.Client snapshot cache — proxy credentials in plaintext, runtime artifact
+*.fsproxy-snapshot.json
