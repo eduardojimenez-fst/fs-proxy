@@ -19,12 +19,23 @@ namespace FSH.Proxy.Client.Caching;
 /// <para>
 /// <b>Credentials are stored in plaintext, by explicit decision.</b> This is an internal cache for
 /// internal systems, and the status quo it replaces — a hardcoded proxy list — had provider
-/// credentials committed directly to source control. A plaintext file in a runtime directory,
-/// readable only by the account the scraper runs as, is strictly better than that. The trade-off was
-/// made deliberately, not overlooked: do not "fix" it by quietly adding encryption. What IS required
-/// of any caller: the cache directory must be a runtime/data directory, never colocated with
-/// configuration, and it (or its contents) must be listed in <c>.gitignore</c> so a snapshot never
-/// ends up back in source control.
+/// credentials committed directly to source control. A runtime-only plaintext file is strictly
+/// better than that. The trade-off was made deliberately, not overlooked: do not "fix" it by quietly
+/// adding encryption.
+/// </para>
+/// <para>
+/// <b>This type sets no file permissions or ACL of any kind, on either target framework.</b> Whatever
+/// the operating system's default permissions are for a newly-created file in the directory you point
+/// it at, that is exactly what this cache's file gets — nothing here narrows them further. Pointing
+/// this at a directory with broad default read access (e.g. Windows' <c>%PROGRAMDATA%</c>, which
+/// grants Read to the built-in <c>Users</c> group) makes the file readable by every local account, not
+/// only the one the scraper runs as — it provides no isolation on its own. If per-account isolation
+/// matters in your deployment, point this at a directory already scoped to the scraper's own account
+/// instead (Windows: <c>%LOCALAPPDATA%</c>, not <c>%PROGRAMDATA%</c>) and rely on THAT directory's own
+/// permissions; this type does nothing to provide isolation on your behalf. What IS still required of
+/// any caller regardless of that choice: the cache directory must be a runtime/data directory, never
+/// colocated with configuration, and it (or its contents) must be listed in <c>.gitignore</c> so a
+/// snapshot never ends up back in source control.
 /// </para>
 /// <para>
 /// <b>Neither <see cref="Read"/> nor <see cref="Write"/> can throw.</b> Every failure mode — a
@@ -130,16 +141,24 @@ public sealed class FileSnapshotCache : IProxySnapshotCache
             {
                 File.WriteAllText(tempPath, json);
 
-                // Write via a temp file then move: a crash or failure mid-write leaves the
-                // previous snapshot (if any) exactly as it was, rather than a truncated file.
+                // Write via a temp file then move/replace: a crash or failure mid-write leaves the
+                // previous snapshot (if any) exactly as it was, rather than a truncated file. On
+                // net10, File.Move(overwrite: true) is itself the atomic swap. netstandard2.0's
+                // File.Move has no overwrite option at all, so a naive Delete-then-Move would leave a
+                // window with NO snapshot on disk if the process dies between the two calls — exactly
+                // the moment the fallback matters most. File.Replace closes that window on this
+                // target: it is a single atomic operation when the destination already exists.
 #if NET
                 File.Move(tempPath, path, overwrite: true);
 #else
                 if (File.Exists(path))
                 {
-                    File.Delete(path);
+                    File.Replace(tempPath, path, destinationBackupFileName: null);
                 }
-                File.Move(tempPath, path);
+                else
+                {
+                    File.Move(tempPath, path);
+                }
 #endif
             }
             finally

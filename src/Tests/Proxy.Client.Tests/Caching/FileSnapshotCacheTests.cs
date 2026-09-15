@@ -65,6 +65,28 @@ public sealed class FileSnapshotCacheTests : IDisposable
         Should.NotThrow(() => cache.Write("country:cl", Sample()));
     }
 
+    // I8: the previous snapshot must be replaced, not merely written alongside it — this is the
+    // path that exercises File.Replace on netstandard2.0 (the destination file already exists) and
+    // File.Move(overwrite: true) on net10, rather than the create-fresh-file path every other test
+    // above exercises.
+    [Fact]
+    public void Write_Should_Overwrite_An_Existing_Snapshot_For_The_Same_Key()
+    {
+        var cache = new FileSnapshotCache(_directory, TimeSpan.FromHours(24));
+        var first = Sample();
+        var second = Sample();
+
+        cache.Write("country:cl", first);
+        cache.Write("country:cl", second);
+        var read = cache.Read("country:cl");
+
+        read.ShouldNotBeNull();
+        read.Count.ShouldBe(1);
+        read[0].Id.ShouldBe(second[0].Id);
+        read[0].Id.ShouldNotBe(first[0].Id);
+        Directory.GetFiles(_directory).Length.ShouldBe(1, "overwriting the same key must not leave the old file (or a stray temp file) behind.");
+    }
+
     [Fact]
     public void Different_Tag_Sets_Should_Not_Collide()
     {
