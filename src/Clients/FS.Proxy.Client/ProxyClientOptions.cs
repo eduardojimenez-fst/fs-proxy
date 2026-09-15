@@ -71,5 +71,17 @@ public sealed class ProxyClientOptions
         if (FeedbackBatchSize < 1 || FeedbackBatchSize > 200) throw new InvalidOperationException($"{nameof(FeedbackBatchSize)} must be between 1 and 200.");
         if (SuccessSampling < 0 || SuccessSampling > 1) throw new InvalidOperationException($"{nameof(SuccessSampling)} must be between 0 and 1.");
         if (RefreshJitterPercent < 0 || RefreshJitterPercent > 100) throw new InvalidOperationException($"{nameof(RefreshJitterPercent)} must be between 0 and 100.");
+
+        // The remaining knobs were previously unchecked: a 0 RefreshInterval yields a ~1ms refresh
+        // loop hammering the service, a 0 FeedbackQueueCapacity silently drops every single event
+        // Report() is ever called with, and a negative/zero StaleCeiling or FeedbackFlushInterval
+        // makes the pool/feedback timers misbehave in ways that are hard to diagnose from the
+        // symptom alone. Every TimeSpan/int knob on this type now has a validated range, not only
+        // the five that happened to be checked first.
+        if (RefreshInterval <= TimeSpan.Zero) throw new InvalidOperationException($"{nameof(RefreshInterval)} must be greater than zero.");
+        if (StaleCeiling <= TimeSpan.Zero) throw new InvalidOperationException($"{nameof(StaleCeiling)} must be greater than zero.");
+        if (Quarantine < TimeSpan.Zero) throw new InvalidOperationException($"{nameof(Quarantine)} must not be negative.");
+        if (FeedbackFlushInterval <= TimeSpan.Zero) throw new InvalidOperationException($"{nameof(FeedbackFlushInterval)} must be greater than zero.");
+        if (FeedbackQueueCapacity < 1) throw new InvalidOperationException($"{nameof(FeedbackQueueCapacity)} must be at least 1.");
     }
 }

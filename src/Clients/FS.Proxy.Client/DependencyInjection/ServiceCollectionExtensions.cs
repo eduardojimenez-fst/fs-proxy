@@ -10,7 +10,7 @@ namespace FSH.Proxy.Client.DependencyInjection;
 
 /// <summary>
 /// Adoption level 2's DI wiring — net10-only. Everything here is a thin convenience over what a
-/// DI-less caller could already build by hand: <see cref="AddFsProxyClient"/> binds
+/// DI-less caller could already build by hand: <see cref="AddFsProxyClient(IServiceCollection, IConfiguration)"/> binds
 /// <see cref="ProxyClientOptions"/> from configuration and registers a single, container-owned
 /// <see cref="IProxySource"/>; <see cref="AddFsProxyRotation"/> adds <see cref="FsProxyRotationHandler"/>
 /// to one named/typed <see cref="HttpClient"/>'s pipeline.
@@ -67,6 +67,38 @@ public static class ServiceCollectionExtensions
 
         var options = new ProxyClientOptions();
         section.Bind(options);
+        return AddFsProxyClientCore(services, options);
+    }
+
+    /// <summary>
+    /// Same as <see cref="AddFsProxyClient(IServiceCollection, IConfiguration)"/>, plus
+    /// <paramref name="configureOptions"/> run immediately after binding, before
+    /// <see cref="ProxyClientOptions.Validate"/>. This is the only Level-2 DI path that can reach
+    /// <see cref="ProxyClientOptions.SnapshotCache"/> at all: it is an <c>IProxySnapshotCache</c>
+    /// interface, not a POCO shape <see cref="IConfiguration"/> binding can construct, so without this
+    /// overload the startup-outage protection that cache exists to provide — the whole reason
+    /// <see cref="Caching.FileSnapshotCache"/> exists — was unreachable from configuration binding.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// services.AddFsProxyClient(configuration.GetSection("FsProxy"), options =>
+    ///     options.SnapshotCache = new FileSnapshotCache(cacheDirectory, TimeSpan.FromHours(24)));
+    /// </code>
+    /// </example>
+    public static IServiceCollection AddFsProxyClient(this IServiceCollection services, IConfiguration section, Action<ProxyClientOptions> configureOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(section);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
+        var options = new ProxyClientOptions();
+        section.Bind(options);
+        configureOptions(options);
+        return AddFsProxyClientCore(services, options);
+    }
+
+    private static IServiceCollection AddFsProxyClientCore(IServiceCollection services, ProxyClientOptions options)
+    {
         options.Validate();
 
         services.AddHttpClient(TransportClientName);
@@ -84,7 +116,7 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Adds <see cref="FsProxyRotationHandler"/> to this <see cref="HttpClient"/>'s message handler
     /// pipeline, leasing against <paramref name="tags"/> from the container's <see cref="IProxySource"/>
-    /// (registered by <see cref="AddFsProxyClient"/>). See <see cref="FsProxyRotationHandler"/>'s own
+    /// (registered by <see cref="AddFsProxyClient(IServiceCollection, IConfiguration)"/>). See <see cref="FsProxyRotationHandler"/>'s own
     /// remarks for why it terminates the pipeline itself (rather than delegating to whatever primary
     /// handler this <see cref="HttpClient"/> was otherwise configured with) whenever a proxy is
     /// actually leased — a primary handler configured via

@@ -1,5 +1,6 @@
 using System.Net.Http;
 using FSH.Proxy.Client;
+using FSH.Proxy.Client.Caching;
 using FSH.Proxy.Client.DependencyInjection;
 using FSH.Proxy.Client.Http;
 using Microsoft.Extensions.Configuration;
@@ -64,5 +65,36 @@ public sealed class ServiceCollectionExtensionsTests
         }
 
         foundRotationHandler.ShouldBeTrue();
+    }
+
+    // I12: SnapshotCache is an IProxySnapshotCache — not bindable from IConfiguration — so this
+    // overload was the only Level-2 DI path that could ever reach it at all. Without it, the
+    // startup-outage protection the cache exists to provide was unreachable from the DI-based
+    // adoption path, even though it worked perfectly well when ProxyClientOptions was built by hand.
+    [Fact]
+    public async Task AddFsProxyClient_With_ConfigureOptions_Should_Apply_The_Configured_SnapshotCache()
+    {
+        var services = new ServiceCollection();
+        var cache = new FileSnapshotCache(
+            Path.Combine(Path.GetTempPath(), "fsproxy-di-test-" + Guid.NewGuid().ToString("N")),
+            TimeSpan.FromHours(24));
+
+        services.AddFsProxyClient(Configuration(), options => options.SnapshotCache = cache);
+        await using ServiceProvider provider = services.BuildServiceProvider();
+
+        var registeredOptions = provider.GetRequiredService<ProxyClientOptions>();
+
+        registeredOptions.SnapshotCache.ShouldBeSameAs(cache);
+    }
+
+    // Companion: configureOptions still runs through the same Validate() as the plain overload —
+    // a caller misusing it to set an out-of-range value must fail loudly at startup, not silently.
+    [Fact]
+    public void AddFsProxyClient_With_ConfigureOptions_Should_Still_Validate_The_Result()
+    {
+        var services = new ServiceCollection();
+
+        Should.Throw<InvalidOperationException>(() =>
+            services.AddFsProxyClient(Configuration(), options => options.PoolSize = 0));
     }
 }
