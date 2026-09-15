@@ -562,4 +562,72 @@ public sealed class FeedbackBufferTests
         await Should.NotThrowAsync(() => buffer.FlushAsync(CancellationToken.None));
         _ = client.DidNotReceive().RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
     }
+
+    // Important 1 (fix round 2): closes the gap I3 opened. A periodic flush failure now drops only
+    // the failed batch, leaving the remainder queued — correct, since it was never sent. But without
+    // this cooldown, a backlog held at/above FeedbackBatchSize by an ALREADY-DOWN service would make
+    // every subsequent Report call's size trigger (ProxySource, not this type) dispatch another
+    // one-batch attempt against a transport that just failed. FeedbackFlushInterval is used as the
+    // cooldown window: the size trigger should never fire more eagerly, while down, than the
+    // periodic timer it exists alongside would have anyway.
+    [Fact]
+    public async Task CanDispatchSizeTriggeredFlush_Should_Be_False_During_The_Cooldown_After_A_Failure()
+    {
+        var client = FakeClient();
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new HttpRequestException("boom")));
+        var options = Options();
+        options.FeedbackFlushInterval = TimeSpan.FromHours(1); // cooldown must clearly still be active
+        var buffer = new FeedbackBuffer(client, options);
+        buffer.CanDispatchSizeTriggeredFlush.ShouldBeTrue("no failure has happened yet.");
+
+        buffer.Enqueue(Guid.NewGuid(), ProxyOutcome.Failure, null);
+        await buffer.FlushAsync(CancellationToken.None);
+
+        buffer.CanDispatchSizeTriggeredFlush.ShouldBeFalse("a failure just happened; still inside the FeedbackFlushInterval cooldown window.");
+    }
+
+    // Companion: the cooldown must actually expire, not be permanent — once FeedbackFlushInterval
+    // has elapsed since the last failure, the size trigger is allowed to try again.
+    [Fact]
+    public async Task CanDispatchSizeTriggeredFlush_Should_Be_True_Again_Once_The_Cooldown_Elapses()
+    {
+        var client = FakeClient();
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new HttpRequestException("boom")));
+        var options = Options();
+        options.FeedbackFlushInterval = TimeSpan.FromMilliseconds(100);
+        var buffer = new FeedbackBuffer(client, options);
+        buffer.Enqueue(Guid.NewGuid(), ProxyOutcome.Failure, null);
+        await buffer.FlushAsync(CancellationToken.None);
+        buffer.CanDispatchSizeTriggeredFlush.ShouldBeFalse();
+
+        await Task.Delay(200);
+
+        buffer.CanDispatchSizeTriggeredFlush.ShouldBeTrue("the FeedbackFlushInterval cooldown window has elapsed.");
+    }
+
+    // Companion: a SUCCESSFUL flush must clear the cooldown immediately — waiting out the rest of a
+    // now-irrelevant past failure's window would needlessly delay recovery once the service is back.
+    [Fact]
+    public async Task CanDispatchSizeTriggeredFlush_Should_Become_True_Immediately_After_A_Subsequent_Success()
+    {
+        var client = FakeClient();
+        var options = Options();
+        options.FeedbackFlushInterval = TimeSpan.FromHours(1); // would otherwise still be "in cooldown"
+        var buffer = new FeedbackBuffer(client, options);
+
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new HttpRequestException("boom")));
+        buffer.Enqueue(Guid.NewGuid(), ProxyOutcome.Failure, null);
+        await buffer.FlushAsync(CancellationToken.None);
+        buffer.CanDispatchSizeTriggeredFlush.ShouldBeFalse();
+
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.CompletedTask);
+        buffer.Enqueue(Guid.NewGuid(), ProxyOutcome.Failure, null);
+        await buffer.FlushAsync(CancellationToken.None);
+
+        buffer.CanDispatchSizeTriggeredFlush.ShouldBeTrue("a successful flush must clear the cooldown immediately, not wait out the rest of a stale window.");
+    }
 }

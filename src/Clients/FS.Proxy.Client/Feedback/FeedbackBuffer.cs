@@ -60,6 +60,13 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     private long _droppedCount;
     private int _disposed;
 
+    /// <summary>
+    /// UTC ticks of the most recent transport failure seen by <see cref="FlushCoreAsync"/>, or 0 if
+    /// none yet (or the most recent attempt since then succeeded) — see
+    /// <see cref="CanDispatchSizeTriggeredFlush"/>.
+    /// </summary>
+    private long _lastFailureTicksUtc;
+
     public FeedbackBuffer(IProxyServiceClient client, ProxyClientOptions options, Func<double>? sampler = null)
     {
 #if NET
@@ -92,6 +99,41 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
 
     /// <summary>Current queue length. Test-only — not part of the public SDK surface.</summary>
     internal int QueuedCount => Interlocked.CompareExchange(ref _count, 0, 0);
+
+    /// <summary>
+    /// Whether a size-triggered flush (<c>ProxySource.Report</c>'s own dispatch once the queue
+    /// reaches <c>ProxyClientOptions.FeedbackBatchSize</c>) should actually be dispatched right now.
+    /// <see langword="false"/> for <c>ProxyClientOptions.FeedbackFlushInterval</c> after the most
+    /// recent transport failure this buffer has seen, <see langword="true"/> otherwise (including
+    /// immediately after a subsequent SUCCESSFUL flush, which clears the cooldown rather than waiting
+    /// it out).
+    /// </summary>
+    /// <remarks>
+    /// Closes a gap I3 opened: I3 made a periodic <see cref="FlushAsync(CancellationToken)"/> failure
+    /// drop only the batch that hit it, leaving the remainder queued — correct, since that remainder
+    /// was never sent and re-queueing it cannot duplicate anything. But with the size trigger added
+    /// afterward, a backlog held at or above <c>FeedbackBatchSize</c> by an ALREADY-DOWN service would,
+    /// without this cooldown, have caused EVERY subsequent <see cref="Enqueue"/>-driven <c>Report</c>
+    /// call to dispatch another one-batch attempt against a transport that just failed — precisely the
+    /// "retrying in a tight loop... an unbounded run against an already-down service" this type's own
+    /// <see cref="FlushCoreAsync"/> remarks say must not happen for the ordinary timer-driven path
+    /// either. The cooldown window is <c>FeedbackFlushInterval</c> specifically so the size trigger
+    /// never fires more eagerly, while down, than the periodic timer it is a convenience alongside
+    /// would have anyway.
+    /// </remarks>
+    internal bool CanDispatchSizeTriggeredFlush
+    {
+        get
+        {
+            long lastFailureTicks = Interlocked.Read(ref _lastFailureTicksUtc);
+            if (lastFailureTicks == 0)
+            {
+                return true;
+            }
+
+            return DateTime.UtcNow.Ticks - lastFailureTicks >= _options.FeedbackFlushInterval.Ticks;
+        }
+    }
 
     /// <summary>
     /// Records one usage outcome for later delivery. Synchronous, non-blocking, and cannot throw: the
@@ -188,9 +230,15 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
             try
             {
                 await _client.RequestFeedbackAsync(batch, ct).ConfigureAwait(false);
+
+                // Clears the size-trigger cooldown immediately on recovery, rather than waiting out
+                // whatever was left of it from a now-irrelevant PAST failure — see
+                // CanDispatchSizeTriggeredFlush's own remarks.
+                Interlocked.Exchange(ref _lastFailureTicksUtc, 0);
             }
             catch (Exception)
             {
+                Interlocked.Exchange(ref _lastFailureTicksUtc, DateTime.UtcNow.Ticks);
                 Interlocked.Add(ref _droppedCount, batch.Count);
 
                 if (isFinalFlush)

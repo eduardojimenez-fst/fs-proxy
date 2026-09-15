@@ -188,12 +188,23 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable, IDisposable
     /// very end of the scraper's own shutdown path — see the integration guide's Level-0 section,
     /// right beside <see cref="Initialize"/>. Safe to call more than once.
     /// </summary>
+    /// <remarks>
+    /// Also clears <see cref="Instance"/> back to its pre-<see cref="Initialize"/> state. Leaving
+    /// <c>s_instance</c> pointing at the now-disposed source would let a later, mistaken
+    /// <c>ProxySource.Instance.Report(...)</c> call succeed silently — it would enqueue into a
+    /// <see cref="FeedbackBuffer"/> whose timer has been stopped and will never flush again, losing
+    /// the event with no signal that anything was wrong. Reading <see cref="Instance"/> after
+    /// <see cref="Shutdown"/> instead throws the same actionable "call Initialize first" error a
+    /// caller would get from never having initialized at all — a loud failure in place of a silent one.
+    /// </remarks>
     public static void Shutdown()
     {
         if (s_instance is IDisposable disposable)
         {
             disposable.Dispose();
         }
+
+        s_instance = null;
     }
 
     /// <summary>
@@ -256,9 +267,22 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable, IDisposable
     /// concurrent <see cref="Report"/> calls crossing the threshold at once cannot each independently
     /// dispatch their own flush — one dispatch drains the buffer for all of them.
     /// </summary>
+    /// <remarks>
+    /// Also consults <see cref="FeedbackBuffer.CanDispatchSizeTriggeredFlush"/>: I3 made a periodic
+    /// flush failure drop only the failed batch, leaving the remainder queued for next time — correct,
+    /// since it was never sent — but that means a backlog held at or above <c>FeedbackBatchSize</c> by
+    /// an already-down service stays there, and without this check EVERY subsequent <see cref="Report"/>
+    /// call would re-cross the threshold and dispatch another one-batch attempt against a transport
+    /// that just failed. See that property's own remarks for the cooldown this defers to.
+    /// </remarks>
     private void MaybeTriggerSizeBasedFlush()
     {
         if (_feedbackBuffer.QueuedCount < _options.FeedbackBatchSize)
+        {
+            return;
+        }
+
+        if (!_feedbackBuffer.CanDispatchSizeTriggeredFlush)
         {
             return;
         }

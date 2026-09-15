@@ -474,6 +474,32 @@ public sealed class ProxySourceTests
         Should.NotThrow(() => ProxySource.Shutdown());
     }
 
+    // Minor (fix round 2): Shutdown() must leave Instance UNUSABLE, not pointing at a disposed
+    // source — otherwise a later, mistaken ProxySource.Instance.Report(...) call would succeed
+    // silently, enqueuing into a FeedbackBuffer whose timer has been stopped and will never flush
+    // again: a silent loss where the docs promise a no-op. Instance should instead throw the same
+    // actionable error a caller gets from never having called Initialize at all.
+    [Fact]
+    public void Shutdown_Should_Leave_Instance_Unusable_Rather_Than_Pointing_At_A_Disposed_Source()
+    {
+        ProxySource.ResetInstanceForTests();
+        var options = Options();
+        options.Tags = ["country:cl"];
+        ProxySource.Initialize(options);
+
+        ProxySource.Shutdown();
+
+        try
+        {
+            InvalidOperationException exception = Should.Throw<InvalidOperationException>(() => ProxySource.Instance);
+            exception.Message.ShouldContain(nameof(ProxySource.Initialize));
+        }
+        finally
+        {
+            ProxySource.ResetInstanceForTests();
+        }
+    }
+
     // I11: MaybeTriggerReactiveRefresh must not run the transport's own synchronous prologue (on
     // .NET Framework, HttpClient.SendAsync's prologue includes proxy auto-detection/WPAD, which can
     // block for seconds before ever reaching an await) on the CALLING thread — Lease/GetProxies are
@@ -581,6 +607,44 @@ public sealed class ProxySourceTests
         await Task.Delay(200);
 
         _ = client.DidNotReceive().RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
+
+        await source.DisposeAsync();
+    }
+
+    // Important 1 (fix round 2): without FeedbackBuffer.CanDispatchSizeTriggeredFlush's cooldown, a
+    // backlog held at/above FeedbackBatchSize by an ALREADY-DOWN transport would make EVERY
+    // subsequent Report call's size trigger dispatch another one-batch attempt — exactly the "retry
+    // in a tight loop against an already-down service" FeedbackBuffer's own remarks say must not
+    // happen. Reports well past FeedbackBatchSize with a transport that always fails and asserts only
+    // the FIRST size-triggered attempt actually reaches the transport.
+    [Fact]
+    public async Task Report_Should_Not_Dispatch_One_Size_Triggered_Flush_Attempt_Per_Call_While_The_Transport_Is_Failing()
+    {
+        var client = ClientReturning(Endpoints(1));
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new HttpRequestException("boom")));
+        var options = Options();
+        options.Tags = ["country:cl"];
+        options.FeedbackBatchSize = 3;
+        options.FeedbackFlushInterval = TimeSpan.FromHours(1); // the periodic timer must not be what's firing here
+        var source = new ProxySource(options, client);
+        await source.WarmupAsync();
+
+        for (int i = 0; i < 20; i++)
+        {
+            source.Report(Guid.NewGuid(), ProxyOutcome.Failure);
+        }
+
+        // Give any dispatched flush attempts time to actually run.
+        await Task.Delay(300);
+
+        // Without the cooldown this would be roughly one RequestFeedbackAsync call per Report once
+        // the queue first crosses FeedbackBatchSize (a failed periodic-style flush drops only its own
+        // batch per I3, so the backlog stays at/above the threshold) — i.e. many calls. With the
+        // cooldown, only the very first size-triggered attempt (before any failure has been recorded
+        // yet) should have reached the transport. Asserted BEFORE disposal below, since disposal's
+        // own terminal flush would add one more (unrelated) call and confuse this count.
+        _ = client.Received(1).RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
 
         await source.DisposeAsync();
     }
