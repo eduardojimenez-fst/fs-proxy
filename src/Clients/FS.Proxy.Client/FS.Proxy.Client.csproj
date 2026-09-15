@@ -12,8 +12,25 @@
 
     <IsPackable>true</IsPackable>
     <PackageId>FS.Proxy.Client</PackageId>
-    <Version>0.1.0-preview.1</Version>
+    <Version>0.1.0-preview.2</Version>
     <Description>Client SDK for the FS Proxy management service: pooled proxy leasing with outcome feedback, for .NET Framework 4.8 and .NET 10 scrapers.</Description>
+
+    <!-- Directory.Build.props sets the fullstackhero starter-kit's own boilerplate metadata for
+         every packable project in this fork (project/repository URLs, an MIT license claim nobody
+         actually chose for this internal package, starter-kit tags, and the STARTER KIT'S OWN root
+         README as the package readme — which opens "Your application, generated from the FSH .NET
+         Starter Kit" and would be the first thing a consumer of THIS package sees). None of that
+         describes this SDK or this fork, so every one of those is overridden here rather than
+         inherited. -->
+    <PackageProjectUrl>https://github.com/eduardojimenez-fst/fs-proxy</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/eduardojimenez-fst/fs-proxy</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>FSProxy;ProxyClient;Scraping;HttpClient;Proxy</PackageTags>
+    <!-- No PackageLicenseExpression: this is an internal package on a private folder feed, and
+         nobody has actually chosen a license for it — asserting "MIT" (the starter-kit default)
+         would be asserting a decision nobody made, which is worse than asserting none. -->
+    <PackageLicenseExpression></PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
 
     <!-- Directory.Build.targets turns on IncludeSymbols + snupkg for every packable project.
          A folder feed serves .nupkg only, so a .snupkg there is dead weight and gives no
@@ -27,6 +44,38 @@
          noise since sources are already embedded. -->
     <EnableSourceLink>false</EnableSourceLink>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Overrides Directory.Build.props' PackageReadmeFile=README.md, which otherwise resolves
+         to the starter-kit's own root README two directories up — see the metadata overrides
+         above. This one is short, SDK-specific, and points a phase-3/4 integrator at the real
+         integration guide instead. -->
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!--
+    src/Directory.Build.targets unconditionally adds the STARTER KIT'S OWN root README.md to every
+    packable project's package at PackagePath "/README.md" ("Include root README.md in NuGet
+    packages"). That collides with this project's own README.md item above — both target the same
+    package path — and fails the pack with NU5118 ("file already contains the file"), not merely
+    "shadows" it silently. Same reasoning and same fix shape as DisableSymbolPackage below: Directory
+    Build.targets is imported AFTER this file, so a plain `<None Remove>` here would run before that
+    later Include and have nothing to remove yet — this has to be a Target that runs at EXECUTION
+    time, after every evaluation-time Include (this project's own and Directory.Build.targets') has
+    already happened. It must run BeforeTargets="_GetPackageFiles" specifically, NOT "GenerateNuspec":
+    `_GetPackageFiles` is one of GenerateNuspec's own DependsOnTargets, and it is what actually
+    snapshots `@(None)` into `@(_PackageFiles)` — DependsOnTargets run BEFORE a
+    BeforeTargets="GenerateNuspec" hook does, so by the time that hook fires the snapshot NU5118
+    validates has already been taken, and removing from `@(None)` there is too late. Confirmed
+    empirically: hooking GenerateNuspec still produced the NU5118 duplicate-file error.
+  -->
+  <Target Name="RemoveInheritedStarterKitReadme" BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <_StarterKitReadme Include="@(None)" Condition="'%(Filename)%(Extension)' == 'README.md' and '%(FullPath)' != '$(MSBuildProjectDirectory)/README.md'" />
+      <None Remove="@(_StarterKitReadme)" />
+    </ItemGroup>
+    <Warning Condition="'@(_StarterKitReadme)' == ''" Text="RemoveInheritedStarterKitReadme found nothing to remove — Directory.Build.targets' own README.md item may have changed shape; verify no NU5118 duplicate-file error before trusting this." />
+  </Target>
 
   <!-- netstandard2.0 has no built-in System.Text.Json and no nullable attributes. -->
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
