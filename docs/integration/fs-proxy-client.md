@@ -14,7 +14,7 @@ particular) rather than repeating it.
 | | |
 |---|---|
 | Package id | `FS.Proxy.Client` |
-| Version | `0.1.0-preview.1` |
+| Version | `0.1.0-preview.2` |
 | Target frameworks | `netstandard2.0` (legacy .NET Framework 4.8 scrapers) and `net10.0` (TAG, new code) |
 
 Published to the `fsh-local` NuGet feed, a **folder feed on the developer machine that built it**
@@ -44,11 +44,11 @@ and reference the package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.1" />
+  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.2" />
 </ItemGroup>
 ```
 
-`0.1.0-preview.1` is a prerelease version; either pass `--prerelease` to tooling that filters it out
+`0.1.0-preview.2` is a prerelease version; either pass `--prerelease` to tooling that filters it out
 by default, or pin the exact version as above (recommended while this package is pre-1.0).
 
 ## 2. Configuration — `ProxyClientOptions`
@@ -95,9 +95,9 @@ file that gets committed.
 
 ## 3. Level 0 — legacy .NET Framework 4.8 scrapers on `WebRequest`
 
-The whole surface a Level-0 caller needs is four calls: `ProxySource.Initialize`, `GetProxies`,
-`ToWebProxy()`, and `Report`. No DI container, no `HttpClient`, no async requirement beyond the
-one-time startup warmup.
+The whole surface a Level-0 caller needs is five calls: `ProxySource.Initialize`, `GetProxies`,
+`ToWebProxy()`, `Report`, and — at shutdown — `ProxySource.Shutdown()`. No DI container, no
+`HttpClient`, no async requirement beyond the one-time startup warmup.
 
 ```csharp
 using System;
@@ -118,10 +118,11 @@ public static class ProxyBootstrap
             Tags = new[] { ProxyTags.Country.Chile, ProxyTags.Source.ChileMercadoPublico },
 
             // Optional: survives a startup outage of the proxy service by serving the last known-good
-            // set from disk. Point this at a runtime/data directory, never next to configuration —
-            // see the note just below this sample for why.
+            // set from disk. Point this at a runtime/data directory scoped to THIS ACCOUNT, never
+            // next to configuration, and never %ProgramData% — see the note just below this sample
+            // for why %LOCALAPPDATA% (per-account) is the right choice and %ProgramData% is not.
             SnapshotCache = new FileSnapshotCache(
-                Path.Combine(Environment.GetEnvironmentVariable("ProgramData") ?? Path.GetTempPath(), "fsproxy-cache"),
+                Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Path.GetTempPath(), "fsproxy-cache"),
                 TimeSpan.FromHours(24)),
         };
 
@@ -136,6 +137,17 @@ public static class ProxyBootstrap
         // startup — everything after this is synchronous and does no I/O.
         ProxySource.Instance.WarmupAsync().GetAwaiter().GetResult();
     }
+
+    /// <summary>
+    /// Call once, at the very end of the process's own shutdown path — a `finally` around your
+    /// scrape loop, an `AppDomain.ProcessExit`/`AtExit` hook, whatever this scraper already has.
+    /// Flushes anything still buffered (up to a few seconds, bounded) and stops every timer. Without
+    /// this, whatever `Report` calls happened since the last periodic flush — often exactly the
+    /// `Banned`/`Timeout` events describing the failure that ended the run — are lost, and there is
+    /// no async shutdown hook on this target to reach `IAsyncDisposable.DisposeAsync` from instead.
+    /// Safe to call more than once; a no-op if `Initialize` was never called.
+    /// </summary>
+    public static void Shutdown() => ProxySource.Shutdown();
 }
 ```
 
@@ -144,6 +156,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Sockets;
 using FSH.Proxy.Client;
 
 public static class LegacyScraper
@@ -157,7 +170,16 @@ public static class LegacyScraper
             throw new InvalidOperationException("No proxies available for country:cl.");
         }
 
-        ProxyEndpoint proxy = proxies[new Random().Next(proxies.Count)];
+        // ProxySource.Instance.Lease(...) does the SDK's own correct, cursor-based rotation over
+        // this same pool — use it instead of indexing the list with your own RNG. `new
+        // Random().Next(...)` looks harmless but is tick-seeded on .NET Framework: a tight retry loop
+        // can construct several `Random` instances within the same tick and pick the SAME proxy
+        // repeatedly, silently defeating rotation.
+        ProxyEndpoint? proxy = ProxySource.Instance.Lease(ProxyTags.Country.Chile);
+        if (proxy is null)
+        {
+            throw new InvalidOperationException("No proxies available for country:cl.");
+        }
 
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Proxy = proxy.ToWebProxy();
@@ -183,6 +205,18 @@ public static class LegacyScraper
             ProxySource.Instance.Report(proxy.Id, ProxyOutcomeClassifier.FromException(ex), ex.Message);
             throw;
         }
+        catch (Exception ex) when (ex is IOException or SocketException)
+        {
+            // WebException is not the only way a proxied read can fail: once GetResponse() has
+            // returned, reading the response STREAM can throw IOException (the connection dropped
+            // mid-read) or SocketException (a lower-level transport failure) instead — neither of
+            // which is a WebException, so a handler that only catches WebException never reports
+            // these at all. ProxyOutcomeClassifier.FromException's default case (Failure) is the
+            // right call for both: something about this proxy's connection broke after it looked
+            // like it was working.
+            ProxySource.Instance.Report(proxy.Id, ProxyOutcomeClassifier.FromException(ex), ex.Message);
+            throw;
+        }
     }
 }
 ```
@@ -193,6 +227,13 @@ strictly better than that). What is required of the directory you point it at:
 
 - It must be a runtime/data directory the scraper's own account can write to — never colocated with
   `appsettings.json`/`webscraper.json`, and never a path under source control.
+- **`FileSnapshotCache` sets no file permissions or ACL of any kind.** Whatever the OS's default
+  permissions are for a newly-created file in the directory you point it at, that is exactly what
+  this cache's file gets. `%LOCALAPPDATA%` (used above) is scoped to the account the scraper runs
+  as by the OS itself; `%ProgramData%` is **not** — it grants Read to the built-in `Users` group by
+  default, so a cache pointed there is readable by every local account, not only the one the scraper
+  runs as. Use `%LOCALAPPDATA%`, never `%ProgramData%`, if per-account isolation of these plaintext
+  credentials matters in your deployment.
 - `FileSnapshotCache` names each file `<sha-256-hex>.fsproxy-snapshot.json` — a SHA-256 hash of its
   cache key for uniqueness, plus a fixed, self-identifying suffix so an operator staring at the cache
   directory can tell what these files are without opening one. This repo's own `.gitignore` carries a
@@ -209,6 +250,10 @@ Notes:
 - Report **something** for every attempt that went through a leased proxy, success or failure — even
   though `Success` is not transmitted to the server by default (§7), `Report` also drives the
   process-local quarantine, which only fires from a call you make.
+- Call `ProxySource.Shutdown()` once, at the very end of your own process shutdown path — see the
+  `Initialize`/`Shutdown` pair above. This is the only reachable flush-on-exit path for a target with
+  no async shutdown hook; skipping it loses whatever feedback was buffered since the last periodic
+  flush.
 
 ## 4. Level 1 — TAG's `WebScraper`
 
@@ -463,6 +508,64 @@ conscious decision when phase 3 wires `PinProxy` up to the new tag-based pools �
 of that scraper's life, which is a very different failure mode from "this proxy got quarantined and
 another one took over" that the rest of the SDK provides everywhere else.
 
+### `WebScraperV2` — the config change applies as-is; reporting does not exist yet
+
+The spec's §1 "Level 1" heading names both `WebScraper` and `WebScraperV2`, but everything above this
+point was written against `WebScraper.cs` only. Read directly from
+`FST.TAG/src/Core/Application.Common/Common/Scraping/WebScraper/WebScraperV2.cs` (branch `develop`,
+net10.0) on 2026-09-15 — it is a much smaller, GET/POST-agnostic `HttpClient` wrapper with its own,
+separate `LoadWebScraperConfiguration()` and `GetProxy()`:
+
+```csharp
+private void LoadWebScraperConfiguration()
+{
+    if (_settings is null)
+        throw new Exception("WebScraper Settings is not configured.");
+
+    UseProxy = _settings.UseProxy;
+    Proxies = _settings.Proxies;
+}
+
+private ProxyInfo GetProxy()
+{
+    if (!UseProxy || Proxies == null || Proxies.Count == 0)
+        return null;
+
+    var proxy = Proxies[_currentProxyIndex];
+    _currentProxyIndex = (_currentProxyIndex + 1) % Proxies.Count;
+
+    return proxy;
+}
+```
+
+**Change 1 (the config source) applies to `WebScraperV2` exactly as written above for `WebScraper`** —
+same one-line swap, same `_settings.ProxyTags` replacing `_settings.Proxies`, same `ProxyInfo.ProxyId`
+addition (`WebScraperSettings`/`ProxyInfo` are shared between the two types, so change 2 is not
+duplicated work). Once phase 3's config change empties `webscraper.json`'s proxy lists in favor of
+tags, `WebScraperV2.LoadWebScraperConfiguration()` would otherwise silently assign `Proxies` from a
+now-empty list and every `GetProxy()` call would return `null` from that point on — `UseProxy` stays
+`true`, so this fails silently as "never uses a proxy again," not as a startup error.
+
+**Changes 3 and 4 (retaining the selected proxy, and `RenewProxy()` reporting an outcome) do not apply,
+because there is nothing to change them ON.** `WebScraperV2.cs` has **no `RenewProxy()` method, no
+`CurrentProxy` property, and not a single `catch` block anywhere in the file** — confirmed by reading
+the whole file, not inferred. `GetProxy()` above is the entire proxy-selection surface, called once per
+`CreateClient()`, and nothing downstream of a failed request ever learns which proxy was used. This is
+not a gap in this guide; it is a gap in `WebScraperV2` itself, predating this SDK entirely.
+
+**Consequence:** wiring `WebScraperV2` up to change 1 alone gets it pooled, tagged proxies with
+zero source-controlled credentials — a real improvement, and worth doing. But it gets **no outcome
+feedback at all**: no local quarantine (nothing calls `IProxySource.Report`, so a proxy `WebScraperV2`
+just watched fail keeps being handed out by its own round-robin `GetProxy()` on the very next call) and
+no signal to the service's policy engine either. Introducing reporting into `WebScraperV2` is new work,
+not a modification of an existing hook the way changes 3/4 are for `WebScraper` — at minimum it needs
+somewhere to catch the exception (today nothing does), a place to retain the proxy `GetProxy()` most
+recently handed out (there is no `_currentProxy` field to piggyback on, unlike `WebScraper`'s
+pre-existing `CurrentProxy`), and a decision on whether that catch belongs inside `WebScraperV2` itself
+or in every one of its callers. **Treat `WebScraperV2` reporting as explicitly out of phase-3 scope**
+unless whoever picks up TAG's side of this work chooses to take it on as additional, scoped work — do
+not assume changes 3/4 above apply to it just because they apply to `WebScraper`.
+
 ## 5. Level 2 — new code (`AddFsProxyClient` + `AddFsProxyRotation`)
 
 For code written from here on that does not go through `WebScraper` — net10 only.
@@ -498,6 +601,20 @@ the first request to hit a warm pool rather than an empty one that fills on firs
 `HttpClient`'s pipeline: it leases a proxy from the container's `IProxySource` per request, sends
 through it, classifies the response/exception, and reports the outcome automatically — nothing else to
 call.
+
+**Configuring `SnapshotCache` (§3's startup-outage protection) from this DI path** needs the second
+`AddFsProxyClient` overload — `ProxyClientOptions.SnapshotCache` is an `IProxySnapshotCache` interface,
+not a shape `IConfiguration` binding can construct on its own:
+
+```csharp
+builder.Services.AddFsProxyClient(builder.Configuration.GetSection("FsProxy"), options =>
+    options.SnapshotCache = new FileSnapshotCache(
+        Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA")!, "fsproxy-cache"),
+        TimeSpan.FromHours(24)));
+```
+
+`configureOptions` runs after binding and before `Validate()`, so it can also override anything else
+configuration already set — it is a general escape hatch, not only for `SnapshotCache`.
 
 **Read §8 before wiring this onto a client that also carries Polly, correlation-id propagation, or
 relies on `IHttpClientFactory`'s own request logging** — `AddFsProxyRotation`'s handler has a real,
@@ -545,8 +662,10 @@ whether you pass `"Country:CL"` or `"country:cl"` — both address the same pool
 - **Local quarantine.** A proxy reported as anything other than `Success` is set aside in-process for
   `Quarantine` (default 2 minutes) and not offered again until it lapses — this happens immediately,
   client-side, without waiting for a round trip to the server's policy engine. If *every* proxy in a
-  pool is currently quarantined, the quarantine is ignored and the least-bad one is handed out anyway —
-  a questionable proxy beats failing the scrape outright.
+  pool is currently quarantined, the quarantine is ignored and one is handed out anyway — a
+  questionable proxy beats failing the scrape outright. This is **not** a badness ranking: there is no
+  concept of "less bad" anywhere in the SDK, so it is not the least-bad proxy that gets served, just
+  the next one `Lease`'s own rotation cursor would have returned regardless of quarantine state.
 - **`Success` is not transmitted to the server by default.** `SuccessSampling` defaults to `0`; the
   service's `PolicyEvaluationService` only ever counts non-`Success` events when deciding whether to
   disable a proxy, so transmitting successes at the default setting would write rows no decision ever
@@ -583,3 +702,9 @@ whether you pass `"Country:CL"` or `"country:cl"` — both address the same pool
   scraper has nothing underneath that understands that scheme. If a legacy scraper is tagged into a
   pool that can return SOCKS5 proxies, either exclude that tag combination for Level-0 callers or
   filter `Protocol != ProxyProtocol.Socks5` before use.
+- **Sticky sessions are not implemented.** The design spec's §2 describes a `strategy=Sticky` +
+  `sessionId` path — bypassing the pool, cached locally for 25 minutes, deliberately below the
+  server's 30-minute pin — as part of the pool lifecycle design, but `IProxySource` has no member that
+  takes a `sessionId` or otherwise exposes that path. A caller that needs a single proxy pinned across
+  multiple requests today has only `Lease`/`GetProxies` plus its own external bookkeeping (remember the
+  `ProxyEndpoint.Id` you got back and keep asking for it) — there is no SDK-level seam for it yet.

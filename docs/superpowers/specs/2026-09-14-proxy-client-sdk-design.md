@@ -132,7 +132,17 @@ services.AddHttpClient("mercadopublico").AddFsProxyRotation(ProxyTags.Country.Ch
 - **Fill:** `POST /request { tags, count = PoolSize, strategy = Random }`.
   **`Random`, never `RoundRobin`.** The round-robin cursor is global per tag-set and mutated on every call; ten scrapers refreshing their pools through it would turn the cursor into noise. Rotation is local, over an immutable snapshot swapped wholesale on refresh.
 - **Refresh:** every 60–120 s with 20% jitter, plus a reactive refresh when healthy proxies fall below 50% of `PoolSize`. The reactive path carries a ~15 s debounce so a fully-down tag set does not cause every scraper to hammer `/request`.
-- **Local quarantine:** a proxy reported `Banned` or `Timeout` is set aside locally for ~2 min. The client protects itself immediately rather than waiting for the server to disable. If *every* proxy is quarantined, the quarantine is ignored and the least-bad one is served — a questionable proxy beats throwing.
+- **Local quarantine:** a proxy reported `Banned` or `Timeout` is set aside locally for ~2 min. **The
+  implementation also quarantines on `Failure`** — the SDK's `Report` treats every non-`Success`
+  outcome the same way for this purpose, not only `Banned`/`Timeout` as first specified here. Recorded
+  as an improvement, not a defect: a `Failure` (broken/misauthenticated proxy) is exactly as
+  unproductive to keep re-offering as a `Banned` or `Timeout` one, and there is no reason the local
+  self-protection should wait for a category distinction the server-side policy engine cares about but
+  the client's own next `Lease` call does not. The client protects itself immediately rather than
+  waiting for the server to disable. If *every* proxy is quarantined, the quarantine is ignored and one
+  is served anyway — a questionable proxy beats throwing. This is not a badness ranking: there is no
+  concept of "least-bad" anywhere in the implementation, so what is actually served is simply the next
+  proxy the pool's own rotation cursor would have returned regardless of quarantine state.
 - **Sticky:** bypasses the pool. Calls `/request` with `strategy=Sticky` + `sessionId`, cached locally for 25 min — deliberately below the server's 30 min pin, so the pin never expires underneath the client.
 - **Degradation:** on a 404 (`"No active proxies match the requested tags"`) or an unreachable API, **the pool is not emptied**. The stale snapshot keeps being served up to a `StaleCeilingMinutes` (~10 min) ceiling, then hard-fails. Without this, a 30-second network blip strands every scraper at once.
 
@@ -168,8 +178,10 @@ The question the SDK exists to answer consistently: **did the proxy fail, or did
 | HTTP 403 / 429 from the destination | `Banned` | The portal recognized and rejected the IP |
 | HTTP 500 / 502 / 503 from the destination | **`Success`** | The tunnel worked. The portal is what fell over |
 | HTTP 404 / 400 from the destination | **`Success`** | Same. The proxy did its job |
+| HTTP 408 from the destination | **`Success`** | 408 is the ORIGIN server's own response (its own idle-timeout decision) — nothing to do with the proxy in front of it. Despite the name, this is a deliberate deviation from "`*Timeout` status ⇒ `Timeout`", flagged explicitly here rather than left as an unremarked exception |
+| HTTP 504 from the destination | **`Success`** | 504 is the destination's own gateway/reverse-proxy answering with an error status, exactly like 502/503 — the tunnel still worked. An overloaded origin emits 502/503/504 near-interchangeably; classifying 504 differently from its siblings would report the same bad afternoon as `Success` via one status and `Timeout` via another, quarantining every proxy that happens to touch it. Also a deliberate deviation, flagged for the same reason as 408 above |
 
-The last two rows are the reason to centralize this. Reporting `Failure` when a portal returns 503 punishes healthy proxies and can disable an entire pool because a portal had a bad afternoon.
+The 500/502/503/504 rows are the reason to centralize this. Reporting `Failure` when a portal returns 503 (or 504) punishes healthy proxies and can disable an entire pool because a portal had a bad afternoon.
 
 ### The content-detection hook
 
@@ -194,7 +206,7 @@ This hook carries the most valuable signal the team has — the kind that curren
 - **`Report()` never blocks.** It enqueues onto a bounded queue (10,000 events). On overflow it drops and counts the drop. Feedback must never throttle a scrape.
 - **Flush every 10 s or 50 events**, whichever comes first.
 - **`Success` events are not sent.** `PolicyEvaluationService` ignores them, so transmitting them writes rows no decision ever reads. Success rate is measured locally against the `IMetrics` abstraction TAG already has, where it is free. A `SuccessSampling` option defaults to 0 for anyone who later wants the server-side series.
-- **Final flush on shutdown**, ~3 s timeout. These are batch processes; losing the last batch means losing precisely the events describing the failure that ended the run.
+- **Final flush on shutdown**, ~5 s timeout (`FeedbackBuffer.DisposalFlushTimeout`; an earlier draft of this spec said ~3 s — the implementation's 5 s is the number that shipped and is the one to treat as authoritative). These are batch processes; losing the last batch means losing precisely the events describing the failure that ended the run.
 
 ### `POST /api/v1/proxies/feedback/batch`
 
@@ -295,6 +307,17 @@ later, which is the argument for doing this before phase 3 rather than after.
 
 ## 7. Configuration
 
+**The JSON below is illustrative only and does not bind to `ProxyClientOptions` as shipped** — do not
+copy it. The property names here (`RefreshSeconds`, `StaleCeilingMinutes`, `QuarantineMinutes`,
+`FeedbackFlushSeconds`, and the nested `Cache: { Mode, TtlHours }`) predate the implementation and were
+never renamed to match it; the actual type binds `RefreshInterval`/`StaleCeiling`/`Quarantine`/
+`FeedbackFlushInterval` as `TimeSpan` strings (`"00:01:30"`, not a bare number of seconds) and has no
+`Cache` property at all (`SnapshotCache` is an `IProxySnapshotCache` set in code — see the integration
+guide's §5 for the DI overload that reaches it). **The integration guide's own configuration sample
+(§2 and §5) is correct; this one is not** — it is left here, marked, rather than deleted, so a reader
+comparing the two understands why they differ instead of silently trusting whichever one they saw
+first.
+
 ```json
 "FsProxy": {
   "BaseAddress": "https://proxy-qa.falconsoft.cl",
@@ -311,7 +334,10 @@ later, which is the argument for doing this before phase 3 rather than after.
 }
 ```
 
-The **API key travels in an environment variable** (`FSPROXY_APIKEY`), never in the JSON — the only secret left once `webscraper.json` is emptied.
+The **API key travels in an environment variable** (`FSPROXY_API_KEY`), never in the JSON — the only
+secret left once `webscraper.json` is emptied. (An earlier draft of this spec wrote this as
+`FSPROXY_APIKEY`, without the underscore; `FSPROXY_API_KEY` is the name the implementation and the
+integration guide actually use — this is the correction, not a second valid spelling.)
 
 `ProxyClientOptions` must be constructible by hand (`new ProxyClientOptions { … }`), not only by binding: legacy processes may be on `app.config` with no `IConfiguration`. Binding and the DI extension are the net10 convenience path, not a requirement.
 
@@ -440,3 +466,13 @@ Phase 1 is independent and mergeable on its own. Phases 3 and 4 run in parallel.
   exists specifically to raise that table's write rate by an order of magnitude. The policy query
   stays fast via its index, so this is a storage and backup-window concern, not correctness — but
   it is new, and a decision is needed before phase 3.
+- **Multi-target the test project to `net48`.** The highest-leverage follow-up identified during the
+  final whole-branch review: nothing in `Proxy.Client.Tests` currently executes a single `#if !NET`
+  branch, so the netstandard2.0-only code paths (the `HttpRequestException.StatusCode`-less fallback
+  in `ProxyOutcomeClassifier`, the `File.Replace`-based crash-safe write in `FileSnapshotCache`, the
+  divergent `HttpClient` timeout shape on .NET Framework) build but are never actually exercised by a
+  test running on that runtime. At least three of that review's findings — a cooperative cancellation
+  reported as `Failure`, a non-crash-safe cache write, and the documented netstandard2.0 timeout
+  classification gap — are exactly the kind of thing a `net48` test run would have caught mechanically
+  rather than by inspection. Deliberately not done as part of that review's fix wave: it is a
+  standalone piece of infrastructure work with its own review cycle, not a line item.
