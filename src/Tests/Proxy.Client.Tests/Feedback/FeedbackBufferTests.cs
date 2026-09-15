@@ -125,6 +125,78 @@ public sealed class FeedbackBufferTests
         _ = client.DidNotReceive().RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
     }
 
+    // I4: the server's validator requires a non-empty ProxyId and rejects the WHOLE batch — every
+    // event in it, not only the offending one — if any single event violates that. Screening
+    // Guid.Empty out at Enqueue time keeps one caller bug from poisoning the rest of the backlog.
+    [Fact]
+    public async Task Enqueue_Should_Drop_And_Count_An_Event_With_An_Empty_ProxyId()
+    {
+        var client = FakeClient();
+        var buffer = new FeedbackBuffer(client, Options());
+
+        buffer.Enqueue(Guid.Empty, ProxyOutcome.Failure, "boom");
+        await buffer.FlushAsync(CancellationToken.None);
+
+        buffer.DroppedCount.ShouldBe(1);
+        buffer.QueuedCount.ShouldBe(0);
+        _ = client.DidNotReceive().RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
+    }
+
+    // Companion: a valid event enqueued alongside an empty-ProxyId one must still ship — the bad
+    // event is dropped, not the whole call.
+    [Fact]
+    public async Task Enqueue_Should_Still_Accept_A_Valid_Event_Enqueued_Alongside_An_Empty_ProxyId_One()
+    {
+        var client = FakeClient();
+        var buffer = new FeedbackBuffer(client, Options());
+        var validId = Guid.NewGuid();
+
+        buffer.Enqueue(Guid.Empty, ProxyOutcome.Failure, null);
+        buffer.Enqueue(validId, ProxyOutcome.Failure, null);
+        await buffer.FlushAsync(CancellationToken.None);
+
+        buffer.DroppedCount.ShouldBe(1);
+        _ = client.Received(1).RequestFeedbackAsync(
+            Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 1 && events[0].ProxyId == validId),
+            Arg.Any<CancellationToken>());
+    }
+
+    // I4: the server's validator caps Detail at 2048 characters and rejects the whole batch if any
+    // one event exceeds it. Truncating (not dropping) keeps the event's outcome — the important
+    // half of the signal — while staying inside what the server will accept.
+    [Fact]
+    public async Task Enqueue_Should_Truncate_Detail_To_The_Servers_2048_Character_Cap()
+    {
+        var client = FakeClient();
+        var buffer = new FeedbackBuffer(client, Options());
+        var proxyId = Guid.NewGuid();
+        string oversized = new string('x', 5000);
+
+        buffer.Enqueue(proxyId, ProxyOutcome.Failure, oversized);
+        await buffer.FlushAsync(CancellationToken.None);
+
+        _ = client.Received(1).RequestFeedbackAsync(
+            Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 1 && events[0].ProxyId == proxyId && events[0].Detail!.Length == 2048),
+            Arg.Any<CancellationToken>());
+        buffer.DroppedCount.ShouldBe(0, "truncation must not count as a drop — the event still ships, just shortened.");
+    }
+
+    // Companion: a detail already within the cap must reach the transport byte-for-byte, unchanged.
+    [Fact]
+    public async Task Enqueue_Should_Not_Alter_A_Detail_Already_Within_The_Cap()
+    {
+        var client = FakeClient();
+        var buffer = new FeedbackBuffer(client, Options());
+        var proxyId = Guid.NewGuid();
+
+        buffer.Enqueue(proxyId, ProxyOutcome.Failure, "connect refused");
+        await buffer.FlushAsync(CancellationToken.None);
+
+        _ = client.Received(1).RequestFeedbackAsync(
+            Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 1 && events[0].Detail == "connect refused"),
+            Arg.Any<CancellationToken>());
+    }
+
     // 4. Enqueueing past FeedbackQueueCapacity drops rather than blocking, and DroppedCount rises.
     [Fact]
     public async Task Enqueue_Past_Capacity_Should_Drop_And_Raise_DroppedCount()
@@ -273,13 +345,15 @@ public sealed class FeedbackBufferTests
         firstCompleted.ShouldBe(disposeTask, "Dispose must return within a bounded timeout, not hang on a stuck transport call.");
     }
 
-    // Fix round 1, Important 1: a transport exception must not silently lose everything queued behind
-    // the batch that actually hit the failing transport. Batch size 2 over 5 events means the first
-    // DrainBatch() pulls 2, the transport throws on that call, and 3 more are still sitting in the
-    // queue at that moment — all 5 must land in DroppedCount, not just the 2 that were actually sent
-    // to the (failing) transport.
+    // I3: a transport failure during an ORDINARY (periodic) FlushAsync call must drop only the batch
+    // that actually hit the failure — everything still queued behind it was NEVER SENT, so
+    // re-queueing it cannot duplicate anything, and discarding it too would throw away real,
+    // unsent signal (often exactly the Banned/Timeout events a policy decision most needs) over one
+    // transient failure. Batch size 2 over 5 events means the first DrainBatch() pulls 2, the
+    // transport throws on that call, and 3 more are still sitting in the queue at that moment — only
+    // those first 2 land in DroppedCount; the remaining 3 must stay queued for the next cycle.
     [Fact]
-    public async Task Transport_Exception_During_Flush_Should_Count_The_Entire_Remaining_Queue_As_Dropped()
+    public async Task Transport_Exception_During_Periodic_Flush_Should_Only_Drop_The_Failed_Batch_And_Retain_The_Remainder()
     {
         var client = FakeClient();
         client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
@@ -294,10 +368,44 @@ public sealed class FeedbackBufferTests
 
         await Should.NotThrowAsync(() => buffer.FlushAsync(CancellationToken.None));
 
-        buffer.DroppedCount.ShouldBe(5);
-        buffer.QueuedCount.ShouldBe(0);
+        buffer.DroppedCount.ShouldBe(2);
+        buffer.QueuedCount.ShouldBe(3, "events never sent to the failing transport must survive for the next flush cycle, not be discarded alongside the batch that actually failed.");
         // Exactly one transport attempt: once it fails, this FlushAsync call must not keep hammering
         // an already-failing service with the remaining batches instead of giving up.
+        _ = client.Received(1).RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
+
+        // The companion half: those 3 retained events are still there for the NEXT cycle to pick up
+        // once the transport recovers.
+        client.ClearReceivedCalls();
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>()).Returns(Task.CompletedTask);
+        await buffer.FlushAsync(CancellationToken.None);
+        _ = client.Received(1).RequestFeedbackAsync(Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 2), Arg.Any<CancellationToken>());
+        _ = client.Received(1).RequestFeedbackAsync(Arg.Is<IReadOnlyList<FeedbackItem>>(events => events.Count == 1), Arg.Any<CancellationToken>());
+        buffer.QueuedCount.ShouldBe(0);
+    }
+
+    // I3's other half: there IS no next cycle for the terminal disposal flush, so — unlike the
+    // periodic path above — a transport failure there drops and counts the ENTIRE remaining queue,
+    // not only the batch that hit the failure. This is the old (pre-I3) unconditional behavior,
+    // preserved deliberately for exactly this one call site.
+    [Fact]
+    public void Dispose_Should_Count_The_Entire_Remaining_Queue_As_Dropped_When_The_Final_Flush_Fails()
+    {
+        var client = FakeClient();
+        client.RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException(new HttpRequestException("boom")));
+        var options = Options();
+        options.FeedbackBatchSize = 2;
+        var buffer = new FeedbackBuffer(client, options);
+        for (int i = 0; i < 5; i++)
+        {
+            buffer.Enqueue(Guid.NewGuid(), ProxyOutcome.Failure, null);
+        }
+
+        Should.NotThrow(() => buffer.Dispose());
+
+        buffer.DroppedCount.ShouldBe(5);
+        buffer.QueuedCount.ShouldBe(0);
         _ = client.Received(1).RequestFeedbackAsync(Arg.Any<IReadOnlyList<FeedbackItem>>(), Arg.Any<CancellationToken>());
     }
 

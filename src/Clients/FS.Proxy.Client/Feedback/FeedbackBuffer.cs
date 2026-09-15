@@ -29,7 +29,7 @@ namespace FSH.Proxy.Client.Feedback;
 /// setting.
 /// </para>
 /// <para>
-/// <b>This type is passive</b>, like <c>Pool.ProxyPool</c>: it exposes <see cref="FlushAsync"/> but
+/// <b>This type is passive</b>, like <c>Pool.ProxyPool</c>: it exposes <see cref="FlushAsync(CancellationToken)"/> but
 /// owns no timer of its own — the timer belongs to <c>ProxySource</c> (a later task), which schedules
 /// flushes on <c>ProxyClientOptions.FeedbackFlushInterval</c> and calls in.
 /// </para>
@@ -42,6 +42,12 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     /// that die quickly, and this must never be the reason one does not.
     /// </summary>
     private static readonly TimeSpan DisposalFlushTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// The server's validator caps <c>Detail</c> at 2048 characters and rejects the WHOLE batch if
+    /// any one event exceeds it — see <see cref="Enqueue"/>'s own remarks.
+    /// </summary>
+    private const int MaxDetailLength = 2048;
 
     private readonly IProxyServiceClient _client;
     private readonly ProxyClientOptions _options;
@@ -72,13 +78,15 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// Count of events lost rather than delivered: queue-capacity overflows from <see cref="Enqueue"/>,
-    /// plus — once a transport exception hits during a <see cref="FlushAsync"/> call — every event that
-    /// call was holding, not merely the batch in flight when the exception fired (see
-    /// <see cref="FlushAsync"/>'s remarks). Does NOT include a <see cref="ProxyOutcome.Success"/> event
-    /// skipped by <c>ProxyClientOptions.SuccessSampling</c>, and does NOT include one skipped because
-    /// the injected sampler itself threw — both are an intentional/defensive "do not transmit", not a
-    /// loss.
+    /// Count of events lost rather than delivered: queue-capacity overflows and screened-out events
+    /// (an empty <c>proxyId</c>) from <see cref="Enqueue"/>, plus whatever a <see cref="FlushAsync(CancellationToken)"/>
+    /// transport failure drops — the batch that actually hit the failure always, and, ONLY for the
+    /// terminal disposal flush (<see cref="Dispose"/>/<see cref="DisposeAsync"/>), everything still
+    /// queued behind it too (see <see cref="FlushAsync(CancellationToken)"/>'s remarks for why the periodic path keeps
+    /// the remainder instead). Does NOT include a <see cref="ProxyOutcome.Success"/> event skipped by
+    /// <c>ProxyClientOptions.SuccessSampling</c>, and does NOT include one skipped because the
+    /// injected sampler itself threw — both are an intentional/defensive "do not transmit", not a
+    /// loss. Does NOT include <c>detail</c> truncation — that event still ships, just shortened.
     /// </summary>
     public long DroppedCount => Interlocked.Read(ref _droppedCount);
 
@@ -90,12 +98,33 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     /// event is either enqueued or dropped-and-counted, and either way the caller's scrape proceeds
     /// unaffected.
     /// </summary>
+    /// <remarks>
+    /// Two additional guards protect the REST of the batch this event will ship in, not just this
+    /// one event: the server's validator rejects the whole submitted batch — every event in it, not
+    /// only the offending one — if any single event's <c>Detail</c> exceeds 2048 characters or its
+    /// <c>ProxyId</c> is empty. Left unguarded, one oversized exception message or one
+    /// <c>Report(Guid.Empty, …)</c> call turns every flush that batch is part of into a 400, which
+    /// <see cref="FlushAsync(CancellationToken)"/> then has to treat as a transport failure — discarding real signal
+    /// about OTHER, unrelated proxies over a single caller mistake, and doing so repeatedly if the
+    /// offending exception recurs. <c>detail</c> is truncated rather than rejected (it is still
+    /// useful information, just capped at what the server will accept); an empty <c>proxyId</c> is
+    /// dropped outright and counted in <see cref="DroppedCount"/>, since there is nothing valid to
+    /// attach it to.
+    /// </remarks>
     public void Enqueue(Guid proxyId, ProxyOutcome outcome, string? detail)
     {
         if (outcome == ProxyOutcome.Success && !ShouldTransmitSuccess())
         {
             return;
         }
+
+        if (proxyId == Guid.Empty)
+        {
+            Interlocked.Increment(ref _droppedCount);
+            return;
+        }
+
+        string? truncatedDetail = detail is { Length: > MaxDetailLength } ? detail.Substring(0, MaxDetailLength) : detail;
 
         if (Interlocked.Increment(ref _count) > _options.FeedbackQueueCapacity)
         {
@@ -104,7 +133,7 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
             return;
         }
 
-        _queue.Enqueue(new FeedbackItem(proxyId, outcome, detail));
+        _queue.Enqueue(new FeedbackItem(proxyId, outcome, truncatedDetail));
     }
 
     /// <summary>
@@ -116,15 +145,33 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
     /// Any exception the transport raises is swallowed — feedback must never break the scrape it
     /// describes. On such a failure this call gives up entirely rather than trying the next batch: a
     /// transport that just failed is likely to fail again immediately, and retrying in a tight loop
-    /// would turn one call into an unbounded run against an already-down service — a real risk for
-    /// <see cref="Dispose"/>/<see cref="DisposeAsync"/>'s bounded shutdown window in particular. So the
-    /// failing batch AND everything still queued behind it at that moment are both counted into
-    /// <see cref="DroppedCount"/> and removed from the queue: for a periodic caller (<c>ProxySource</c>),
-    /// events enqueued after this call returns are unaffected and go out on the next cycle as normal;
-    /// for a final flush during disposal, there is no next cycle, so the counter has to reflect the
-    /// whole loss right here or it would silently under-report it.
+    /// would turn one call into an unbounded run against an already-down service. The batch that
+    /// actually hit the failure is counted into <see cref="DroppedCount"/> and removed from the
+    /// queue — it may or may not have landed server-side before the exception fired, so re-sending it
+    /// risks a duplicate, and the design spec's §4 explicitly rules out blind retry here.
+    /// <para>
+    /// <b>Everything still queued BEHIND that batch was never sent at all</b>, so re-queueing it
+    /// cannot duplicate anything — dropping it too would throw away real, never-transmitted signal
+    /// (often exactly the <c>Banned</c>/<c>Timeout</c> events a policy decision most needs) over one
+    /// transient failure. This ordinary call (used by <c>ProxySource</c>'s periodic timer and its
+    /// size-triggered flush) therefore leaves the remainder queued for the next cycle to pick up —
+    /// only the failed batch is dropped. The one exception is the terminal flush
+    /// <see cref="Dispose"/>/<see cref="DisposeAsync"/> perform on shutdown: there is no next cycle to
+    /// leave anything queued FOR, so that path drops and counts the entire remaining queue too,
+    /// exactly as this method used to do unconditionally before this distinction existed.
+    /// </para>
     /// </remarks>
-    public async Task FlushAsync(CancellationToken ct = default)
+    public Task FlushAsync(CancellationToken ct = default) => FlushCoreAsync(isFinalFlush: false, ct);
+
+    /// <summary>
+    /// The actual implementation behind the public <see cref="FlushAsync(CancellationToken)"/> and
+    /// the terminal disposal flush — see that method's remarks for the one behavioral difference
+    /// <paramref name="isFinalFlush"/> controls. A differently-named method rather than a second
+    /// <c>FlushAsync</c> overload: an overload taking <c>(CancellationToken, bool)</c> would put
+    /// <see cref="CancellationToken"/> in a non-last position (CA1068), and re-ordering it there
+    /// would make the two overloads ambiguous at several existing call sites within this type.
+    /// </summary>
+    private async Task FlushCoreAsync(bool isFinalFlush, CancellationToken ct)
     {
         while (true)
         {
@@ -136,9 +183,8 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
 
 #pragma warning disable CA1031 // A transport failure here (network blip, 5xx, timeout, or the
             // caller's own cancellation racing a disposal timeout) must never propagate out of
-            // FlushAsync — feedback describes a scrape, it must not be able to break it. See the
-            // method's remarks for why the whole remaining queue is dropped alongside this batch,
-            // rather than only this one.
+            // FlushAsync — feedback describes a scrape, it must not be able to break it. See this
+            // method's public overload's remarks for exactly what gets dropped and what does not.
             try
             {
                 await _client.RequestFeedbackAsync(batch, ct).ConfigureAwait(false);
@@ -146,7 +192,14 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
             catch (Exception)
             {
                 Interlocked.Add(ref _droppedCount, batch.Count);
-                DropRemainingQueue(ct);
+
+                if (isFinalFlush)
+                {
+                    // No next cycle: this is the last chance to account for what remains, so (and
+                    // only so) the whole backlog is dropped and counted here too.
+                    DropRemainingQueue(ct);
+                }
+
                 return;
             }
 #pragma warning restore CA1031
@@ -172,7 +225,7 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
 
     /// <summary>
     /// Drains and counts as dropped everything still in the queue after a transport failure has
-    /// already given up on this <see cref="FlushAsync"/> call — see its remarks. Stops early if
+    /// already given up on this <see cref="FlushAsync(CancellationToken)"/> call — see its remarks. Stops early if
     /// <paramref name="ct"/> is already signaled by the time this runs (e.g. a disposal timeout that
     /// fired during the failing transport call itself): whatever is left in that case simply stays
     /// queued, exactly as an ordinary un-drained backlog would.
@@ -252,7 +305,7 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
         // the disposal timeout — see the type's remarks on hanging shutdowns.
         try
         {
-            FlushAsync(cts.Token).GetAwaiter().GetResult();
+            FlushCoreAsync(isFinalFlush: true, cts.Token).GetAwaiter().GetResult();
         }
         catch (Exception)
         {
@@ -278,7 +331,7 @@ public sealed class FeedbackBuffer : IDisposable, IAsyncDisposable
 #pragma warning disable CA1031 // See Dispose(): the final flush must never throw out of disposal.
         try
         {
-            await FlushAsync(cts.Token).ConfigureAwait(false);
+            await FlushCoreAsync(isFinalFlush: true, cts.Token).ConfigureAwait(false);
         }
         catch (Exception)
         {
