@@ -446,6 +446,33 @@ public sealed class ProxyPoolTests
         pool.HealthyCount.ShouldBe(0);
     }
 
+    // Task 8 add-on: ProxyPool.Endpoints (internal) is what ProxySource.GetProxies reads to hand a
+    // caller the pool's whole membership at once — not one of the 11 numbered behaviors (this member
+    // didn't exist until Task 8 needed it), but it follows the exact same degrade rule as Next()/
+    // HealthyCount, so it gets the same two-sided coverage they got.
+    [Fact]
+    public async Task Endpoints_Should_Return_The_Current_Snapshots_Proxies()
+    {
+        var endpoints = Endpoints(3);
+        var pool = await WarmedPool(endpoints);
+
+        pool.Endpoints.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Endpoints_Should_Be_Empty_Once_The_Snapshot_Is_Stale()
+    {
+        var endpoints = Endpoints(2);
+        var clock = new FakeClock();
+        var options = Options();
+        options.StaleCeiling = TimeSpan.FromMinutes(10);
+        var pool = await WarmedPool(endpoints, clock.Get, options);
+
+        clock.Now += TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1);
+
+        pool.Endpoints.ShouldBeEmpty();
+    }
+
     // Fix round 2 (Important 4): a proxy's local quarantine must not survive it being retired
     // server-side. Without pruning, this id would sit in the quarantine dictionary for the rest of
     // the process's life once it leaves every future snapshot — and if the service ever reissues the

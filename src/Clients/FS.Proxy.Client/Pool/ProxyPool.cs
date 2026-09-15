@@ -124,6 +124,37 @@ public sealed class ProxyPool
     }
 
     /// <summary>
+    /// The current snapshot's proxies, or an empty list if the pool has never been warmed or the
+    /// snapshot is past <see cref="IsStale"/> — the exact same degrade rule <see cref="Next"/> and
+    /// <see cref="HealthyCount"/> already apply. Read-only, no locking, no I/O.
+    /// </summary>
+    /// <remarks>
+    /// Internal, not public: this type's Produces surface (<see cref="WarmupAsync"/>,
+    /// <see cref="RefreshAsync"/>, <see cref="Next"/>, <see cref="Quarantine"/>,
+    /// <see cref="HealthyCount"/>, <see cref="IsStale"/>) has no member that hands back the whole
+    /// membership at once — only <c>ProxySource</c> (same assembly) needs that, to implement
+    /// <c>IProxySource.GetProxies</c>, which — unlike <see cref="Next"/> — gives a caller (e.g. a
+    /// scraper managing its own rotation/reputation over the full set) every proxy at once rather
+    /// than one at a time. Reconstructing that list by calling <see cref="Next"/> repeatedly would
+    /// have worked in principle (it visits every member exactly once per <c>PoolSize</c> calls) but
+    /// would have mutated the shared rotation cursor as a side effect of what <c>GetProxies</c>
+    /// documents as a pure read — this property avoids that entirely.
+    /// </remarks>
+    internal IReadOnlyList<ProxyEndpoint> Endpoints
+    {
+        get
+        {
+            ProxySnapshot snapshot = _snapshot;
+            if (_clock() - snapshot.FetchedAt > _options.StaleCeiling)
+            {
+                return Array.Empty<ProxyEndpoint>();
+            }
+
+            return snapshot.Endpoints;
+        }
+    }
+
+    /// <summary>
     /// Fills the pool for the first time: requests <c>PoolSize</c> proxies from the service and, on
     /// success, installs the new snapshot (see <see cref="AcceptFetch"/> — this write-through applies
     /// to every successful fetch, not only a warmup). If the service throws or answers with an empty
