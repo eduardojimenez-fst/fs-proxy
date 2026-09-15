@@ -55,6 +55,26 @@ public sealed class ProxyServiceClientTests
     }
 
     [Fact]
+    public async Task RequestAsync_Should_Map_The_Wire_Protocol_Onto_The_Endpoint()
+    {
+        // Regression guard: the wire DTO used to carry `protocol` and discard it during mapping, so
+        // ToWebProxy() always built a plain http:// proxy no matter what the service actually leased.
+        // A Socks5 or Https proxy dialed as http fails every request, and the client would blame the
+        // proxy (Failure) instead of its own bug — the exact class of silent misattribution this SDK
+        // exists to prevent.
+        const string body = """
+        [{"id":"22222222-2222-2222-2222-222222222222","host":"203.0.113.20","port":1080,"protocol":"Socks5","username":null,"password":null}]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 1, CancellationToken.None);
+
+        result[0].Protocol.ShouldBe(ProxyProtocol.Socks5);
+    }
+
+    [Fact]
     public async Task RequestAsync_Should_Throw_On_An_Unauthorized_Response()
     {
         // A bad API key is a misconfiguration the operator must see, not something to swallow.

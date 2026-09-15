@@ -11,15 +11,15 @@ namespace FSH.Proxy.Client.Transport;
 
 /// <summary>
 /// Wire shape of one item in the <c>POST /api/v1/proxies/request</c> response array. Mirrors the
-/// service's <c>ProxyConnectionDto</c> field-for-field; <see cref="Protocol"/> is carried only
-/// because the response includes it — the client has no use for it, so nothing maps it onward.
+/// service's <c>ProxyConnectionDto</c> field-for-field, including <see cref="Protocol"/> — mapped
+/// onward into <see cref="ProxyEndpoint.Protocol"/>, not dropped.
 /// </summary>
 [SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes",
     Justification = "Only instantiated by System.Text.Json via reflection when deserializing the " +
         "/request response body — never with 'new', so the analyzer cannot see a use.")]
 internal sealed class ProxyConnectionWireDto
 {
-    public ProxyConnectionWireDto(Guid id, string host, int port, string? protocol, string? username, string? password)
+    public ProxyConnectionWireDto(Guid id, string host, int port, ProxyProtocol protocol, string? username, string? password)
     {
         Id = id;
         Host = host;
@@ -32,7 +32,7 @@ internal sealed class ProxyConnectionWireDto
     public Guid Id { get; }
     public string Host { get; }
     public int Port { get; }
-    public string? Protocol { get; }
+    public ProxyProtocol Protocol { get; }
     public string? Username { get; }
     public string? Password { get; }
 }

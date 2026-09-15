@@ -42,7 +42,7 @@ public sealed class ProxyServiceClient : IProxyServiceClient
 
     public ProxyServiceClient(HttpClient httpClient, ProxyClientOptions options)
     {
-#if NET6_0_OR_GREATER
+#if NET
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(options);
 #else
@@ -67,7 +67,7 @@ public sealed class ProxyServiceClient : IProxyServiceClient
     /// <inheritdoc />
     public async Task<IReadOnlyList<ProxyEndpoint>> RequestAsync(IReadOnlyList<string> tags, int count, CancellationToken ct)
     {
-#if NET6_0_OR_GREATER
+#if NET
         ArgumentNullException.ThrowIfNull(tags);
 #else
 #pragma warning disable CA1510
@@ -97,7 +97,7 @@ public sealed class ProxyServiceClient : IProxyServiceClient
         response.EnsureSuccessStatusCode();
 
         // netstandard2.0's HttpContent has no ReadAsStreamAsync(CancellationToken) overload.
-#if NET6_0_OR_GREATER
+#if NET
         using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
 #else
         using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
@@ -109,13 +109,13 @@ public sealed class ProxyServiceClient : IProxyServiceClient
             return Array.Empty<ProxyEndpoint>();
         }
 
-        return items.Select(i => new ProxyEndpoint(i.Id, i.Host, i.Port, i.Username, i.Password)).ToList();
+        return items.Select(i => new ProxyEndpoint(i.Id, i.Host, i.Port, i.Protocol, i.Username, i.Password)).ToList();
     }
 
     /// <inheritdoc />
     public async Task RequestFeedbackAsync(IReadOnlyList<FeedbackItem> events, CancellationToken ct)
     {
-#if NET6_0_OR_GREATER
+#if NET
         ArgumentNullException.ThrowIfNull(events);
 #else
 #pragma warning disable CA1510

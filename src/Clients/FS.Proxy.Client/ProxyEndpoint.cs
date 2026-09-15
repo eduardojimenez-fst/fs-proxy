@@ -9,13 +9,14 @@ namespace FSH.Proxy.Client;
 /// </summary>
 public sealed class ProxyEndpoint
 {
-    public ProxyEndpoint(Guid id, string host, int port, string? username, string? password)
+    public ProxyEndpoint(Guid id, string host, int port, ProxyProtocol protocol, string? username, string? password)
     {
         if (string.IsNullOrWhiteSpace(host)) throw new ArgumentException("Host is required.", nameof(host));
 
         Id = id;
         Host = host.Trim();
         Port = port;
+        Protocol = protocol;
         Username = username;
         Password = password;
     }
@@ -25,18 +26,52 @@ public sealed class ProxyEndpoint
 
     public string Host { get; }
     public int Port { get; }
+
+    /// <summary>
+    /// The scheme this proxy speaks. Required, not defaulted: a caller-supplied default here would
+    /// let a future call site silently mislabel a SOCKS5 or HTTPS proxy as plain HTTP — exactly the
+    /// class of silent-corruption bug this SDK exists to prevent elsewhere.
+    /// </summary>
+    public ProxyProtocol Protocol { get; }
+
     public string? Username { get; }
     public string? Password { get; }
 
-    /// <summary>Builds an <see cref="IWebProxy"/> for <c>HttpClientHandler.Proxy</c> or <c>WebRequest.Proxy</c>.</summary>
+    /// <summary>
+    /// Builds an <see cref="IWebProxy"/> for <c>HttpClientHandler.Proxy</c> or <c>WebRequest.Proxy</c>.
+    /// The returned proxy's <see cref="WebProxy.Address"/> carries the scheme <see cref="Protocol"/>
+    /// calls for (<c>http</c>, <c>https</c>, or <c>socks5</c>) — never a bare <c>http://</c> address
+    /// regardless of the actual protocol.
+    /// </summary>
+    /// <remarks>
+    /// On net6.0+, <c>SocketsHttpHandler</c> — the default handler behind <c>HttpClient</c> —
+    /// understands a <c>socks5://</c> proxy address and will actually tunnel through it. On
+    /// netstandard2.0 targets (.NET Framework via <c>HttpWebRequest</c> / <c>WebRequest.Proxy</c>),
+    /// there is no SOCKS support in that stack at all, full stop. The scheme is still carried
+    /// correctly on the returned <see cref="WebProxy"/> there too — a caller handing it to its own
+    /// SOCKS-capable client still gets the right address — but assigning it straight to
+    /// <c>WebRequest.Proxy</c> on netstandard2.0 will not tunnel through a
+    /// <see cref="ProxyProtocol.Socks5"/> proxy; that stack has nothing that would make it work.
+    /// </remarks>
     public IWebProxy ToWebProxy()
     {
-        var proxy = new WebProxy(Host, Port);
+        var proxy = new WebProxy(BuildProxyUri());
         if (!string.IsNullOrEmpty(Username))
         {
             proxy.Credentials = ToCredential();
         }
         return proxy;
+    }
+
+    private Uri BuildProxyUri()
+    {
+        string scheme = Protocol switch
+        {
+            ProxyProtocol.Https => Uri.UriSchemeHttps,
+            ProxyProtocol.Socks5 => "socks5",
+            _ => Uri.UriSchemeHttp,
+        };
+        return new Uri(string.Format(CultureInfo.InvariantCulture, "{0}://{1}:{2}", scheme, Host, Port));
     }
 
     public NetworkCredential ToCredential() => new(Username, Password);
