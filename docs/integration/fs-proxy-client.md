@@ -17,25 +17,26 @@ particular) rather than repeating it.
 | Version | `0.1.0-preview.4` |
 | Target frameworks | `netstandard2.0` (legacy .NET Framework 4.8 scrapers) and `net10.0` (TAG, new code) |
 
-Published to the `fsh-local` NuGet feed, a **folder feed on the developer machine that built it**
-(`/Users/eduardo/dev/nuget-local` at the time of writing — check this repo's own `NuGet.config` for
-the current value). That is a real constraint, not a formality:
+Published to a **shared folder feed** — the way this organization passes packages between
+developers today, with a private artifact feed planned later. At the time of writing the folder is
+`/Users/eduardo/dev/nuget-local`; check this repo's `NuGet.config` for the current value.
 
-> **The configured feed path is a developer's home directory. It serves exactly one machine.**
-> A consuming repository (TAG, or a legacy scraper) checked out on any other machine — another
-> developer's laptop, a build agent, a production host — cannot `dotnet restore` against it. Before
-> phase 3 or phase 4 can consume this package outside the machine that built it, the feed needs to
-> move to something reachable from all of them: a network share, an internal NuGet server (e.g.
-> BaGet, Azure Artifacts, a GitHub Packages feed), or committing the `.nupkg` into that consumer's own
-> local feed folder as an interim step. Treat this as a prerequisite of phase 3/4, not a detail to
-> discover partway through.
+The source **key name is arbitrary** and local to each `NuGet.config` — this repo calls it
+`fsh-local`, a consuming repo may call it `local`. Only the folder path has to agree.
 
-Once a reachable feed exists, add it to the consuming repository's own `NuGet.config`:
+> **The one thing to get right: the folder must be reachable from every machine that restores.**
+> A path under one developer's home directory serves exactly that machine. A consuming repository
+> checked out elsewhere — another laptop, a build agent, a production host — cannot `dotnet restore`
+> against it. A network share works; so does copying the `.nupkg` into that machine's own feed
+> folder. Whatever the arrangement, verify a restore from a *second* machine before phase 3 or
+> phase 4 depends on it.
+
+Add the source to the consuming repository's own `NuGet.config`:
 
 ```xml
 <configuration>
   <packageSources>
-    <add key="fsh-local" value="\\path\to\shared\feed-or-url" />
+    <add key="local" value="\\path\to\shared\feed-folder" />
   </packageSources>
 </configuration>
 ```
@@ -47,6 +48,28 @@ and reference the package:
   <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.4" />
 </ItemGroup>
 ```
+
+### Debugging into the package
+
+Step-into works out of the box, with **no symbol server and no `.snupkg`** — which is why the
+package deliberately ships neither.
+
+Each assembly carries an embedded portable PDB (`DebugType=embedded`) *and* the full source text of
+every file (`EmbedAllSources=true`). Verified on the published artifact: the assembly is 136,704
+bytes with sources embedded versus 74,752 without, and the published one matches the former. That is
+also why SourceLink is switched off for this package — it resolves sources over the network from a
+repository URL, which is redundant when the sources are already inside the DLL, and it cannot work
+against a folder feed anyway.
+
+**One thing you must change in your IDE, or you will conclude the package has no symbols:**
+
+> Turn **off** "Just My Code".
+> - Visual Studio: Tools → Options → Debugging → General → uncheck *Enable Just My Code*
+> - Rider: Settings → Build, Execution, Deployment → Debugger → uncheck *Enable Just My Code*
+> - VS Code (C# Dev Kit): set `"justMyCode": false` in the `launch.json` configuration
+
+With Just My Code enabled the debugger skips non-user assemblies entirely and F11 steps over
+`FS.Proxy.Client` calls rather than into them — the package is fine, the debugger is filtering it.
 
 `0.1.0-preview.4` is a prerelease version; either pass `--prerelease` to tooling that filters it out
 by default, or pin the exact version as above (recommended while this package is pre-1.0).
