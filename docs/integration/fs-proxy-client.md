@@ -14,7 +14,7 @@ particular) rather than repeating it.
 | | |
 |---|---|
 | Package id | `FS.Proxy.Client` |
-| Version | `0.1.0-preview.5` |
+| Version | `0.1.0-preview.6` |
 | Target frameworks | `netstandard2.0` (legacy .NET Framework 4.8 scrapers) and `net10.0` (TAG, new code) |
 
 Published to a **shared folder feed** — the way this organization passes packages between
@@ -45,7 +45,7 @@ and reference the package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.5" />
+  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.6" />
 </ItemGroup>
 ```
 
@@ -104,7 +104,7 @@ against a folder feed anyway.
 With Just My Code enabled the debugger skips non-user assemblies entirely and F11 steps over
 `FS.Proxy.Client` calls rather than into them — the package is fine, the debugger is filtering it.
 
-`0.1.0-preview.5` is a prerelease version; either pass `--prerelease` to tooling that filters it out
+`0.1.0-preview.6` is a prerelease version; either pass `--prerelease` to tooling that filters it out
 by default, or pin the exact version as above (recommended while this package is pre-1.0).
 
 ## 2. Configuration — `ProxyClientOptions`
@@ -116,7 +116,7 @@ configuration binding (§5, Level 2) is a convenience on top, never a requiremen
 | Property | Type | Default | Notes |
 |---|---|---|---|
 | `BaseAddress` | `Uri?` | `null` (required) | Root of the Proxy Management Service, e.g. `https://proxy-api-qa.falcontenders.com`. |
-| `ApiKey` | `string?` | `null` (required) | **From an environment variable. Never from a config file** — see below. |
+| `ApiKey` | `string?` | `null` (required) | The scraper's own key. Bindable from the section like anything else here, or supplied through the environment — see below. |
 | `Tags` | `string[]` | `[]` | Default tag set used when `GetProxies()`/`Lease()` is called with no tags. |
 | `PoolSize` | `int` | `50` | Proxies held locally per tag set. Hard ceiling of 50 — the service's `RequestProxiesQueryValidator` caps `count` there and silently truncates above it. `Validate()` throws outside `[1, 50]`. |
 | `RefreshInterval` | `TimeSpan` | `00:01:30` (90 s) | Background refresh cadence per pool. |
@@ -134,21 +134,36 @@ Call `options.Validate()` before use if you build `ProxyClientOptions` by hand (
 `InvalidOperationException` naming the first violated constraint. `AddFsProxyClient` (Level 2) calls it
 for you after binding.
 
-### `ApiKey`: environment variable, never a config file
+### `ApiKey`: config file or environment, whichever suits the host
 
-This is a hard rule, not a style preference: `webscraper.json` — the file this SDK replaces — held
-BrightData/WebShare credentials in plaintext, in source control. Do not recreate that mistake one
-level up by writing the proxy-service API key into `appsettings.json`, `webscraper.json`, or any other
-file that gets committed.
+`ApiKey` binds from the `FsProxy` section like every other option:
 
-- **Level 0 / Level 1** (hand-built `ProxyClientOptions`): read it directly —
-  `Environment.GetEnvironmentVariable("FSPROXY_API_KEY")`.
-- **Level 2** (`AddFsProxyClient(configuration.GetSection("FsProxy"))`): the section is bound with the
-  ordinary ASP.NET Core configuration pipeline, which already layers environment variables over
-  `appsettings.json` by default. Put every other `FsProxy:*` setting in `appsettings.json` and supply
-  **only** `ApiKey` through the environment, using the double-underscore section syntax:
-  `FsProxy__ApiKey=<key>`. Never add an `"ApiKey"` line to the JSON file itself, even a placeholder —
-  it is exactly the kind of value someone copy-pastes a real one into later.
+```json
+"FsProxy": {
+  "BaseAddress": "https://proxy-api-qa.falcontenders.com",
+  "ApiKey": "<the scraper's key>",
+  "PoolSize": 10,
+  "SnapshotCacheDirectory": "ProxyCache"
+}
+```
+
+This is a deliberate decision for these systems, not an oversight. They are internal, on an internal
+network, and the alternative — every one of ~24 scraper hosts needing a correctly-injected environment
+variable before it can lease a single proxy — costs more in misconfigured deployments than it buys.
+
+What you give up is real and worth stating plainly: a key in a committed file has the exposure of that
+file. Two things follow. Keys are per-scraper, so one leaked key is one scraper's blast radius, not the
+fleet's. And rotation is the mitigation, not secrecy — revoke and reissue in the FS Proxy admin rather
+than treating a committed key as though it were still private.
+
+**The environment still works, and still wins.** A host that prefers to inject the key keeps doing so,
+and its value overrides whatever is in the file:
+
+- **Level 2** (`AddFsProxyClient(configuration.GetSection("FsProxy"))`): the ordinary ASP.NET Core
+  pipeline already layers environment variables over `appsettings.json`, so `FsProxy__ApiKey=<key>`
+  overrides the JSON with no code change.
+- **Level 0 / Level 1** (hand-built `ProxyClientOptions`): you own the precedence. Read your config
+  first, then let the environment override it — the .NET Framework 4.8 shape is in §3.
 
 ### `SnapshotCache`: warm every tag set you intend to lease against
 
@@ -210,6 +225,7 @@ The whole surface a Level-0 caller needs is five calls: `ProxySource.Initialize`
 
 ```csharp
 using System;
+using System.Configuration;   // ConfigurationManager - add a reference to System.Configuration
 using System.IO;
 using System.Net;
 using FSH.Proxy.Client;
@@ -223,7 +239,18 @@ public static class ProxyBootstrap
         var options = new ProxyClientOptions
         {
             BaseAddress = new Uri("https://proxy-api-qa.falcontenders.com"),
-            ApiKey = Environment.GetEnvironmentVariable("FSPROXY_API_KEY"),
+
+            // App.config first, environment second, so a host that injects the key still overrides
+            // the committed one - the same precedence Level 2 gets for free from the ASP.NET Core
+            // configuration pipeline. See §2's ApiKey note for why the key is allowed in the file.
+            //
+            //   <appSettings>
+            //     <add key="FsProxy.ApiKey" value="<the scraper's key>" />
+            //   </appSettings>
+            ApiKey = FirstNonBlank(
+                Environment.GetEnvironmentVariable("FSPROXY_API_KEY"),
+                ConfigurationManager.AppSettings["FsProxy.ApiKey"]),
+
             Tags = new[] { ProxyTags.Country.Chile, ProxyTags.Source.ChileMercadoPublico },
 
             // Optional: survives a startup outage of the proxy service by serving the last known-good
@@ -246,6 +273,21 @@ public static class ProxyBootstrap
         // tag set's pool and starts its background refresh timer. Call it once, synchronously, at
         // startup — everything after this is synchronous and does no I/O.
         ProxySource.Instance.WarmupAsync().GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// Returns the first value that is not null/blank, so an unset environment variable falls through
+    /// to App.config instead of blanking the key. <c>ProxyClientOptions.Validate()</c> rejects a blank
+    /// <c>ApiKey</c>, so getting this wrong fails loudly at startup rather than on the first lease.
+    /// </summary>
+    private static string FirstNonBlank(params string[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate)) return candidate;
+        }
+
+        return null;
     }
 
     /// <summary>

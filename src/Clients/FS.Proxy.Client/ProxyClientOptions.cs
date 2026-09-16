@@ -13,7 +13,19 @@ public sealed class ProxyClientOptions
     /// <summary>Root of the proxy service, e.g. <c>https://proxy-api-qa.falcontenders.com</c>.</summary>
     public Uri? BaseAddress { get; set; }
 
-    /// <summary>The scraper's own API key. Supply from an environment variable, never from a config file.</summary>
+    /// <summary>
+    /// The scraper's own API key. Bindable from configuration like every other option here — an
+    /// <c>"ApiKey"</c> entry in the <c>FsProxy</c> section is supported and supported deliberately.
+    /// </summary>
+    /// <remarks>
+    /// These are internal systems on an internal network, and the alternative — every host needing a
+    /// correctly-injected environment variable before it can lease a single proxy — costs more in
+    /// misconfigured deployments than it buys. An environment variable still works and still wins
+    /// where a host prefers it (<c>FsProxy__ApiKey</c> through the ordinary configuration pipeline, or
+    /// whatever name a Level-0 caller reads by hand), so a deployment that already injects one keeps
+    /// working unchanged. If you put the key in a committed file, that file's exposure is now the
+    /// key's exposure: rotate through the FS Proxy admin rather than treating it as a secret.
+    /// </remarks>
     public string? ApiKey { get; set; }
 
     /// <summary>Tags this client leases against when none are passed explicitly.</summary>
