@@ -49,6 +49,39 @@ and reference the package:
 </ItemGroup>
 ```
 
+### Testing against the SDK
+
+The SDK gives a consumer **no seam for faking its transport**. `ProxySource.Initialize` always builds
+a real `HttpClient` from `options.BaseAddress`, and the `internal` constructor that takes an
+`IProxyServiceClient` is `InternalsVisibleTo`-scoped to the SDK's own test assembly. So a consumer
+test that wants to exercise the *populated* path — proxies actually leased — has to stand up a real
+local HTTP server returning the `/request` payload.
+
+That is a known sharp edge, not a recommendation; a public transport seam is on the follow-up list.
+If you only need to prove the **fallback** path (no proxies leased, consumer keeps its previous
+behaviour), you need none of this — just do not initialize the SDK.
+
+If you do stand up an `HttpListener`, two things will bite you:
+
+> **Bind to `localhost`, never to `127.0.0.1`.** On Windows, HTTP.SYS auto-exempts only the literal
+> hostname `localhost` from the URL-ACL reservation requirement. A numeric loopback prefix throws
+> `HttpListenerException: Access is denied` for any non-administrator process — deterministically,
+> not intermittently — and since the port is usually chosen dynamically, no static
+> `netsh http add urlacl` reservation can cover it. It passes on macOS and Linux, so it will reach
+> Windows CI unnoticed. Use `localhost` in **both** the listener prefix and the `BaseAddress`, or the
+> request never reaches the listener. This has now been hit twice: once in the SDK's own suite and
+> once in a consumer's.
+
+> **Pin the timers.** Set `RefreshInterval` and `FeedbackFlushInterval` to something long (an hour)
+> in the test's options, so a background refresh cannot race your assertions. And call
+> `ProxySource.Shutdown()` in teardown — `ProxySource.Instance` is static, so without it the first
+> test that initializes changes the outcome of every test that runs afterwards.
+
+The wire shape `/request` returns is a JSON array of
+`{"id","host","port","protocol","username","password"}`, camelCase, with `protocol` as a **string**
+(`"Http"`, `"Https"`, `"Socks5"`) — the service registers a `JsonStringEnumConverter`, so a numeric
+enum deserializes to the wrong member with no error.
+
 ### Debugging into the package
 
 Step-into works out of the box, with **no symbol server and no `.snupkg`** — which is why the
