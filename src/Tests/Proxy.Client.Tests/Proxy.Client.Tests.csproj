@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>Proxy.Client.Tests</RootNamespace>
+		<AssemblyName>Proxy.Client.Tests</AssemblyName>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<NoWarn>$(NoWarn);CA1515;CA1861;CA1707;CA2000</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="NSubstitute" />
+		<PackageReference Include="Shouldly" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="coverlet.collector" />
+		<!-- For ServiceCollectionExtensionsTests' DI round-trip: FS.Proxy.Client's own net10-only
+		     PackageReferences to these are Condition-scoped and do not flow transitively, so this test
+		     project needs its own explicit references to exercise AddFsProxyClient/AddFsProxyRotation. -->
+		<PackageReference Include="Microsoft.Extensions.Configuration" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+		<PackageReference Include="Microsoft.Extensions.Http" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\Clients\FS.Proxy.Client\FS.Proxy.Client.csproj" />
+		<!-- Referenced ONLY by the ProxyTags drift test (a later task), which compares the SDK's
+		     constants against the server's seed catalog. -->
+		<ProjectReference Include="..\..\Modules\Proxies\Modules.Proxies\Modules.Proxies.csproj" />
+	</ItemGroup>
+
+</Project>

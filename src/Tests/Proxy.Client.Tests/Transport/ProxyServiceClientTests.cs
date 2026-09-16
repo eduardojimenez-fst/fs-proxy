@@ -1,0 +1,166 @@
+using System.Net;
+using FSH.Proxy.Client;
+using FSH.Proxy.Client.Transport;
+using Shouldly;
+using Xunit;
+
+namespace Proxy.Client.Tests.Transport;
+
+public sealed class ProxyServiceClientTests
+{
+    private static ProxyClientOptions Options() => new()
+    {
+        BaseAddress = new Uri("https://proxy.test"),
+        ApiKey = "fsh_proxies_deadbeef",
+    };
+
+    [Fact]
+    public async Task RequestAsync_Should_Send_The_ApiKey_Header_And_Normalized_Tags()
+    {
+        const string body = """
+        [{"id":"11111111-1111-1111-1111-111111111111","host":"203.0.113.10","port":8080,"protocol":"Http","username":"u","password":"p"}]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["Country:CL", " entityType:Tender "], 25, CancellationToken.None);
+
+        handler.LastRequest!.Headers.GetValues("X-Api-Key").ShouldBe(["fsh_proxies_deadbeef"]);
+        handler.LastRequest.RequestUri!.AbsolutePath.ShouldBe("/api/v1/proxies/request");
+        // Tags must go out normalized — the server lowercases on its side, but sending the raw
+        // form makes the request body a poor match for what the admin UI shows.
+        // ProxyServiceClient always attaches a JSON body to a /request POST, so LastRequestBody is
+        // known non-null here — the null-forgiving operator reflects that, not a shrug at CS8604.
+        handler.LastRequestBody!.ShouldContain("country:cl");
+        handler.LastRequestBody!.ShouldContain("entitytype:tender");
+        result.Count.ShouldBe(1);
+        result[0].Host.ShouldBe("203.0.113.10");
+        result[0].Password.ShouldBe("p");
+    }
+
+    [Fact]
+    public async Task RequestAsync_Should_Return_Empty_When_The_Service_Says_No_Proxies_Match()
+    {
+        // The service answers 404 with a ProblemDetails when no Active proxy matches the tags.
+        // That is an ordinary, expected state — not an exception — because the caller's fallback
+        // (keep serving the stale snapshot) is the same either way.
+        var handler = new StubHandler(HttpStatusCode.NotFound, """{"title":"No active proxies match the requested tags."}""");
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 25, CancellationToken.None);
+
+        result.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RequestAsync_Should_Map_The_Wire_Protocol_Onto_The_Endpoint()
+    {
+        // Regression guard: the wire DTO used to carry `protocol` and discard it during mapping, so
+        // ToWebProxy() always built a plain http:// proxy no matter what the service actually leased.
+        // A Socks5 or Https proxy dialed as http fails every request, and the client would blame the
+        // proxy (Failure) instead of its own bug — the exact class of silent misattribution this SDK
+        // exists to prevent.
+        const string body = """
+        [{"id":"22222222-2222-2222-2222-222222222222","host":"203.0.113.20","port":1080,"protocol":"Socks5","username":null,"password":null}]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 1, CancellationToken.None);
+
+        result[0].Protocol.ShouldBe(ProxyProtocol.Socks5);
+    }
+
+    // Important 2 (fix round 2): a single malformed record must not abort the whole tag set's
+    // fetch. Proxy.Username/ProtectedPassword are both nullable server-side with no validator
+    // forbidding a password with no username — exactly the combination ProxyEndpoint's own
+    // constructor now rejects (a promoted-minor fix). Before this, one bad row threw out of this
+    // method entirely; ProxyPool.RefreshAsync/WarmupAsync swallow that and keep the previous
+    // snapshot, so one malformed proxy turned into the ENTIRE tag set serving stale until
+    // StaleCeiling and then hard-failing, instead of just that one proxy being unusable.
+    [Fact]
+    public async Task RequestAsync_Should_Skip_A_Malformed_Record_And_Still_Return_The_Others()
+    {
+        const string body = """
+        [
+          {"id":"11111111-1111-1111-1111-111111111111","host":"203.0.113.10","port":8080,"protocol":"Http","username":null,"password":"s3cret"},
+          {"id":"22222222-2222-2222-2222-222222222222","host":"203.0.113.20","port":8080,"protocol":"Http","username":"u","password":"p"}
+        ]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 25, CancellationToken.None);
+
+        result.Count.ShouldBe(1, "the malformed record must be skipped, not thrown for.");
+        result[0].Host.ShouldBe("203.0.113.20");
+        sut.LastSkippedMalformedCount.ShouldBe(1);
+    }
+
+    // Companion: a batch with nothing malformed must report zero skips, not a stale value from a
+    // previous call.
+    [Fact]
+    public async Task RequestAsync_Should_Report_Zero_Skipped_When_Nothing_Is_Malformed()
+    {
+        const string body = """
+        [{"id":"11111111-1111-1111-1111-111111111111","host":"203.0.113.10","port":8080,"protocol":"Http","username":"u","password":"p"}]
+        """;
+        var handler = new StubHandler(HttpStatusCode.OK, body);
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        var result = await sut.RequestAsync(["country:cl"], 25, CancellationToken.None);
+
+        result.Count.ShouldBe(1);
+        sut.LastSkippedMalformedCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task RequestAsync_Should_Throw_On_An_Unauthorized_Response()
+    {
+        // A bad API key is a misconfiguration the operator must see, not something to swallow.
+        var handler = new StubHandler(HttpStatusCode.Unauthorized, "");
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        await Should.ThrowAsync<HttpRequestException>(
+            () => sut.RequestAsync(["country:cl"], 25, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task RequestFeedbackAsync_Should_Post_Outcomes_As_Strings()
+    {
+        var handler = new StubHandler(HttpStatusCode.OK, """{"accepted":1,"rejected":[]}""");
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+        var proxyId = Guid.NewGuid();
+
+        await sut.RequestFeedbackAsync(
+            [new FeedbackItem(proxyId, ProxyOutcome.Banned, "mercadopublico:robot-check")],
+            CancellationToken.None);
+
+        handler.LastRequest!.RequestUri!.AbsolutePath.ShouldBe("/api/v1/proxies/feedback/batch");
+        // The service registers JsonStringEnumConverter, so the outcome must go out as a NAME.
+        // Sending the numeric value deserializes to the wrong member without any error.
+        // ProxyServiceClient always attaches a JSON body to a /feedback/batch POST, so
+        // LastRequestBody is known non-null here.
+        handler.LastRequestBody!.ShouldContain("\"Banned\"");
+        handler.LastRequestBody!.ShouldContain(proxyId.ToString());
+    }
+
+    [Fact]
+    public async Task RequestFeedbackAsync_Should_Not_Call_The_Service_For_An_Empty_Batch()
+    {
+        var handler = new StubHandler(HttpStatusCode.OK, "");
+        using var http = new HttpClient(handler);
+        var sut = new ProxyServiceClient(http, Options());
+
+        await sut.RequestFeedbackAsync([], CancellationToken.None);
+
+        handler.CallCount.ShouldBe(0);
+    }
+}

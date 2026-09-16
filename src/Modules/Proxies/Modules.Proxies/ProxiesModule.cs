@@ -29,6 +29,7 @@ using FSH.Modules.Proxies.Features.v1.Proxies.DisableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.EnableProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ListProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.ReportProxyFeedback;
+using FSH.Modules.Proxies.Features.v1.Proxies.ReportProxyFeedbackBatch;
 using FSH.Modules.Proxies.Features.v1.Proxies.RequestProxies;
 using FSH.Modules.Proxies.Features.v1.Proxies.SetProxyTags;
 using FSH.Modules.Proxies.Features.v1.Proxies.UnassignProxyTag;
@@ -198,6 +199,7 @@ public sealed class ProxiesModule : IModule
         group.MapDisableProxiesEndpoint();
         group.MapRequestProxiesEndpoint();
         group.MapReportProxyFeedbackEndpoint();
+        group.MapReportProxyFeedbackBatchEndpoint();
         group.MapSetProxyTagsEndpoint();
         group.MapAssignProxyTagEndpoint();
         group.MapUnassignProxyTagEndpoint();

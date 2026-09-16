@@ -1,0 +1,128 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Directory.Build.props sets the SINGULAR TargetFramework for everything under src/.
+         With both properties set, MSBuild honours the singular one and silently builds net10
+         only. Clearing it is what makes multi-targeting take effect. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>netstandard2.0;net10.0</TargetFrameworks>
+
+    <RootNamespace>FSH.Proxy.Client</RootNamespace>
+    <AssemblyName>FS.Proxy.Client</AssemblyName>
+
+    <IsPackable>true</IsPackable>
+    <PackageId>FS.Proxy.Client</PackageId>
+    <Version>0.1.0-preview.4</Version>
+    <Description>Client SDK for the FS Proxy management service: pooled proxy leasing with outcome feedback, for .NET Framework 4.8 and .NET 10 scrapers.</Description>
+
+    <!-- Directory.Build.props sets the fullstackhero starter-kit's own boilerplate metadata for
+         every packable project in this fork (project/repository URLs, an MIT license claim nobody
+         actually chose for this internal package, starter-kit tags, and the STARTER KIT'S OWN root
+         README as the package readme — which opens "Your application, generated from the FSH .NET
+         Starter Kit" and would be the first thing a consumer of THIS package sees). None of that
+         describes this SDK or this fork, so every one of those is overridden here rather than
+         inherited. -->
+    <PackageProjectUrl>https://github.com/eduardojimenez-fst/fs-proxy</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/eduardojimenez-fst/fs-proxy</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>FSProxy;ProxyClient;Scraping;HttpClient;Proxy</PackageTags>
+    <!-- No PackageLicenseExpression: this is an internal package on a private folder feed, and
+         nobody has actually chosen a license for it — asserting "MIT" (the starter-kit default)
+         would be asserting a decision nobody made, which is worse than asserting none. -->
+    <PackageLicenseExpression></PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Directory.Build.targets turns on IncludeSymbols + snupkg for every packable project.
+         A folder feed serves .nupkg only, so a .snupkg there is dead weight and gives no
+         step-into debugging. Embedding the PDB in the DLL does. -->
+    <DebugType>embedded</DebugType>
+    <EmbedAllSources>true</EmbedAllSources>
+
+    <!-- EmbedAllSources already puts the sources in the PDB, so SourceLink adds nothing here
+         (Directory.Build.props makes this exact argument for the FSH.Framework local-pack
+         profile) — and it warns on any remote it cannot map to github.com, which is pure
+         noise since sources are already embedded. -->
+    <EnableSourceLink>false</EnableSourceLink>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Overrides Directory.Build.props' PackageReadmeFile=README.md, which otherwise resolves
+         to the starter-kit's own root README two directories up — see the metadata overrides
+         above. This one is short, SDK-specific, and points a phase-3/4 integrator at the real
+         integration guide instead. -->
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!--
+    src/Directory.Build.targets unconditionally adds the STARTER KIT'S OWN root README.md to every
+    packable project's package at PackagePath "/README.md" ("Include root README.md in NuGet
+    packages"). That collides with this project's own README.md item above — both target the same
+    package path — and fails the pack with NU5118 ("file already contains the file"), not merely
+    "shadows" it silently. Same reasoning and same fix shape as DisableSymbolPackage below: Directory
+    Build.targets is imported AFTER this file, so a plain `<None Remove>` here would run before that
+    later Include and have nothing to remove yet — this has to be a Target that runs at EXECUTION
+    time, after every evaluation-time Include (this project's own and Directory.Build.targets') has
+    already happened. It must run BeforeTargets="_GetPackageFiles" specifically, NOT "GenerateNuspec":
+    `_GetPackageFiles` is one of GenerateNuspec's own DependsOnTargets, and it is what actually
+    snapshots `@(None)` into `@(_PackageFiles)` — DependsOnTargets run BEFORE a
+    BeforeTargets="GenerateNuspec" hook does, so by the time that hook fires the snapshot NU5118
+    validates has already been taken, and removing from `@(None)` there is too late. Confirmed
+    empirically: hooking GenerateNuspec still produced the NU5118 duplicate-file error.
+  -->
+  <Target Name="RemoveInheritedStarterKitReadme" BeforeTargets="_GetPackageFiles">
+    <ItemGroup>
+      <_StarterKitReadme Include="@(None)" Condition="'%(Filename)%(Extension)' == 'README.md' and '%(FullPath)' != '$(MSBuildProjectDirectory)/README.md'" />
+      <None Remove="@(_StarterKitReadme)" />
+    </ItemGroup>
+    <Warning Condition="'@(_StarterKitReadme)' == ''" Text="RemoveInheritedStarterKitReadme found nothing to remove — Directory.Build.targets' own README.md item may have changed shape; verify no NU5118 duplicate-file error before trusting this." />
+  </Target>
+
+  <!-- netstandard2.0 has no built-in System.Text.Json and no nullable attributes. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <!-- The net10-only DI extensions (DependencyInjection/ServiceCollectionExtensions.cs, itself
+       guarded by #if NET) are the only thing in this package that need these — a DI-less .NET
+       Framework 4.8 scraper has no IServiceCollection/IConfiguration/IHttpClientBuilder at all, so
+       none of this may leak onto the netstandard2.0 target. -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <!-- IHostApplicationLifetime only, to wire ProxyClientOptions.ShutdownToken from
+         ApplicationStopping in AddFsProxyClient — Abstractions only, never the full
+         Microsoft.Extensions.Hosting package, which a DI-less caller (or one on a bare
+         ServiceCollection with no generic host) has no use for. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+  </ItemGroup>
+
+  <!-- ProxySnapshot (Pool/) is internal on purpose — it is an implementation detail of ProxyPool,
+       not part of the SDK's public surface. Proxy.Client.Tests still needs to construct one
+       directly to pin the "always defensively copies" invariant against a caller-mutated array,
+       which ProxyPool's own public API cannot observe from the outside. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Proxy.Client.Tests" />
+  </ItemGroup>
+
+  <!--
+    Directory.Build.targets sets IncludeSymbols=true for every packable project, and it is imported
+    after this file — so a PropertyGroup here cannot win. Property assignments inside a Target run at
+    execution time, after all evaluation, which is why this has to be a Target rather than a property.
+
+    Must run BeforeTargets="GenerateNuspec", not "Pack": the NuGet SDK's Pack target only
+    DependsOnTargets its way to GenerateNuspec, and GenerateNuspec's own body is what invokes
+    PackTask with IncludeSymbols="$(IncludeSymbols)" — the actual snupkg decision. DependsOnTargets
+    of Pack (GenerateNuspec included) run before any BeforeTargets="Pack" hook, so that hook lands
+    too late; confirmed empirically (a .snupkg still came out).
+
+    We want it off because this package ships to a folder feed, which serves .nupkg only. With
+    DebugType=embedded the PDB is already inside the DLL, so a .snupkg would carry nothing anyway.
+  -->
+  <Target Name="DisableSymbolPackage" BeforeTargets="GenerateNuspec">
+    <PropertyGroup>
+      <IncludeSymbols>false</IncludeSymbols>
+    </PropertyGroup>
+  </Target>
+
+</Project>

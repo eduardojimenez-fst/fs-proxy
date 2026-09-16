@@ -132,7 +132,9 @@ public sealed class ProxiesDbInitializerTests
         categories.Count.ShouldBe(5);
         categories.Single(x => x.Name == "country").Values.Count.ShouldBe(9);
         categories.Single(x => x.Name == "source").Values.Count.ShouldBe(21);
-        categories.Single(x => x.Name == "entityType").Values.Count.ShouldBe(13);
+        // 12, not 13: `Attachments` belongs to operationType only — an attachment scrape is the
+        // tag combination entitytype:tender + operationtype:attachments.
+        categories.Single(x => x.Name == "entityType").Values.Count.ShouldBe(12);
         categories.Single(x => x.Name == "operationType").Values.Count.ShouldBe(1);
         categories.Single(x => x.Name == "application").Values.Count.ShouldBe(8);
     }
