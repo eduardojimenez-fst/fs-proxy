@@ -20,7 +20,7 @@ environments and nothing else. QA and Production must be corrected through the a
   `ProxiesPermissions.ProviderAccounts.View` (Steps 1 and 4 call `GET /tag-categories`, which
   requires `Tags.View`; Step 3's `POST`/`DELETE` require `Tags.Update`; Step 2's `GET /proxies`
   requires `ProviderAccounts.View`).
-- `BASE` set to the environment root, e.g. `export BASE=https://proxy-qa.falconsoft.cl`.
+- `BASE` set to the environment root, e.g. `export BASE=https://proxy-api-qa.falcontenders.com`.
 - `TOKEN` set to that JWT.
 
 Run the whole sequence against **QA first**, verify, then repeat against Production.

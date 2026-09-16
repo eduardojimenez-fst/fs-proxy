@@ -57,7 +57,7 @@ public static class ServiceCollectionExtensions
     /// The returned <see cref="IProxySource"/> is a <see cref="ProxySource"/> — an
     /// <see cref="IAsyncDisposable"/> — registered through a factory delegate, so the container owns
     /// and disposes it (flushing pending feedback, stopping every refresh timer) when the host shuts
-    /// down. Callers wanting <see cref="IProxySource.WarmupAsync"/> run before the first request still
+    /// down. Callers wanting <see cref="IProxySource.WarmupAsync(CancellationToken)"/> run before the first request still
     /// call it themselves (e.g. from a hosted service) — this method only wires the DI graph, it does
     /// not start scraping.
     /// </para>

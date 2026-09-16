@@ -47,5 +47,37 @@ public interface IProxySource
     /// returns empty/<see langword="null"/> (never blocks to fetch), but it also triggers a background
     /// refresh that fills the pool for the calls after it.
     /// </summary>
+    /// <remarks>
+    /// Warming is also what activates <c>ProxyClientOptions.SnapshotCache</c> as a fallback for the
+    /// tag set being warmed — not merely what makes the first call deterministic.
+    /// <see cref="GetProxies"/>/<see cref="Lease"/> never read the cache themselves (they stay
+    /// synchronous and I/O-free — see <c>ProxySource</c>'s own remarks for why), and the reactive
+    /// refresh a non-default tag set gets from its own first <see cref="GetProxies"/>/<see cref="Lease"/>
+    /// call is not a warmup either, so it does not consult the cache. A tag set that is never warmed
+    /// gets a <see cref="ProxyClientOptions.SnapshotCache"/> that is faithfully written to (every
+    /// successful fetch writes through) and never read — no outage protection at all, despite the
+    /// disk file being right there. Equivalent to <c>WarmupAsync(_options.Tags, ct)</c>; see
+    /// <see cref="WarmupAsync(string[], CancellationToken)"/> to warm — and activate the cache for —
+    /// a tag set other than the default.
+    /// </remarks>
     Task WarmupAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// The tag-set-scoped counterpart to <see cref="WarmupAsync(CancellationToken)"/>: fills
+    /// <paramref name="tags"/>' own pool for the first time and starts its background refresh timer,
+    /// for a consumer that leases against per-call tag sets rather than (or in addition to)
+    /// <c>ProxyClientOptions.Tags</c> — the documented, intended usage of <see cref="GetProxies"/>.
+    /// Without this overload, such a consumer has no way to warm those pools at all, which also means
+    /// no way to activate <c>ProxyClientOptions.SnapshotCache</c> as a fallback for them — see
+    /// <see cref="WarmupAsync(CancellationToken)"/>'s remarks.
+    /// </summary>
+    /// <param name="tags">
+    /// The tag set to warm. Normalized and matched to the exact same pool <see cref="GetProxies"/>/
+    /// <see cref="Lease"/> read for the identical tag set — order and casing do not matter, mirroring
+    /// how those two methods already treat tags. <see langword="null"/> or empty falls back to
+    /// <c>ProxyClientOptions.Tags</c>, exactly like <see cref="GetProxies"/>/<see cref="Lease"/> called
+    /// with no arguments — so this overload, called with no tags, also warms the default tag set.
+    /// </param>
+    /// <param name="ct">Propagated to the underlying fetch; does not cancel the write to <c>SnapshotCache</c> on success.</param>
+    Task WarmupAsync(string[] tags, CancellationToken ct = default);
 }

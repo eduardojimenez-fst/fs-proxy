@@ -14,7 +14,7 @@ particular) rather than repeating it.
 | | |
 |---|---|
 | Package id | `FS.Proxy.Client` |
-| Version | `0.1.0-preview.4` |
+| Version | `0.1.0-preview.5` |
 | Target frameworks | `netstandard2.0` (legacy .NET Framework 4.8 scrapers) and `net10.0` (TAG, new code) |
 
 Published to a **shared folder feed** — the way this organization passes packages between
@@ -45,7 +45,7 @@ and reference the package:
 
 ```xml
 <ItemGroup>
-  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.4" />
+  <PackageReference Include="FS.Proxy.Client" Version="0.1.0-preview.5" />
 </ItemGroup>
 ```
 
@@ -104,7 +104,7 @@ against a folder feed anyway.
 With Just My Code enabled the debugger skips non-user assemblies entirely and F11 steps over
 `FS.Proxy.Client` calls rather than into them — the package is fine, the debugger is filtering it.
 
-`0.1.0-preview.4` is a prerelease version; either pass `--prerelease` to tooling that filters it out
+`0.1.0-preview.5` is a prerelease version; either pass `--prerelease` to tooling that filters it out
 by default, or pin the exact version as above (recommended while this package is pre-1.0).
 
 ## 2. Configuration — `ProxyClientOptions`
@@ -115,7 +115,7 @@ configuration binding (§5, Level 2) is a convenience on top, never a requiremen
 
 | Property | Type | Default | Notes |
 |---|---|---|---|
-| `BaseAddress` | `Uri?` | `null` (required) | Root of the Proxy Management Service, e.g. `https://proxy-qa.falconsoft.cl`. |
+| `BaseAddress` | `Uri?` | `null` (required) | Root of the Proxy Management Service, e.g. `https://proxy-api-qa.falcontenders.com`. |
 | `ApiKey` | `string?` | `null` (required) | **From an environment variable. Never from a config file** — see below. |
 | `Tags` | `string[]` | `[]` | Default tag set used when `GetProxies()`/`Lease()` is called with no tags. |
 | `PoolSize` | `int` | `50` | Proxies held locally per tag set. Hard ceiling of 50 — the service's `RequestProxiesQueryValidator` caps `count` there and silently truncates above it. `Validate()` throws outside `[1, 50]`. |
@@ -150,6 +150,40 @@ file that gets committed.
   `FsProxy__ApiKey=<key>`. Never add an `"ApiKey"` line to the JSON file itself, even a placeholder —
   it is exactly the kind of value someone copy-pastes a real one into later.
 
+### `SnapshotCache`: warm every tag set you intend to lease against
+
+**The cache is read only during `WarmupAsync` — never from `GetProxies`/`Lease`.** Those two stay
+synchronous and perform no I/O, cache reads included; that contract is load-bearing (§1 already
+covers why: the legacy scrapers this SDK serves are full of `.Result`/`.Wait()`), so it is not
+something a future version relaxes to make the cache more convenient. Every successful fetch —
+warmup **or** background refresh — writes through to `SnapshotCache` regardless of whether you ever
+call `WarmupAsync` for that tag set. Put those two facts together and the trap is exact: it is
+entirely possible to run for days with a cache directory full of faithfully up-to-date, plaintext
+proxy credentials for a tag set this process can never read back a single one of, because nothing
+ever warmed it. That is not a bug to route around — it is what "read only during warmup" means,
+stated as plainly as this guide can put it.
+
+If you only ever lease against `ProxyClientOptions.Tags`, §3's single `WarmupAsync()` call already
+covers you. **If you lease against per-call tag sets instead — the common shape for a consumer with
+several distinct scrape targets, like TAG's three tag sets per host (§6, §4 change 1) — you must warm
+each one explicitly**, with the tag-set-scoped overload, once at startup:
+
+```csharp
+string[][] tagSetsToWarm =
+[
+    [ProxyTags.EntityType.Tender, ProxyTags.Country.Chile],
+    [ProxyTags.EntityType.Tender, ProxyTags.OperationType.Attachments, ProxyTags.Country.Chile],
+    [ProxyTags.EntityType.PurchaseOrder, ProxyTags.Country.Chile],
+];
+
+await Task.WhenAll(tagSetsToWarm.Select(tags => ProxySource.Instance.WarmupAsync(tags)));
+```
+
+A tag set you never warm this way still *works* — `GetProxies`/`Lease` fill it lazily on first call,
+exactly as before — it just never gets the `SnapshotCache` fallback: its first read after a cold
+start, or after any outage, is a genuine round trip to the service, with nothing on disk to fall back
+to if that round trip fails.
+
 ## 3. Level 0 — legacy .NET Framework 4.8 scrapers on `WebRequest`
 
 The whole surface a Level-0 caller needs is five calls: `ProxySource.Initialize`, `GetProxies`,
@@ -170,7 +204,7 @@ public static class ProxyBootstrap
     {
         var options = new ProxyClientOptions
         {
-            BaseAddress = new Uri("https://proxy-qa.falconsoft.cl"),
+            BaseAddress = new Uri("https://proxy-api-qa.falcontenders.com"),
             ApiKey = Environment.GetEnvironmentVariable("FSPROXY_API_KEY"),
             Tags = new[] { ProxyTags.Country.Chile, ProxyTags.Source.ChileMercadoPublico },
 
@@ -178,6 +212,7 @@ public static class ProxyBootstrap
             // set from disk. Point this at a runtime/data directory scoped to THIS ACCOUNT, never
             // next to configuration, and never %ProgramData% — see the note just below this sample
             // for why %LOCALAPPDATA% (per-account) is the right choice and %ProgramData% is not.
+            // Only ever protects tag sets WarmupAsync actually runs for — see §2's SnapshotCache note.
             SnapshotCache = new FileSnapshotCache(
                 Path.Combine(Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? Path.GetTempPath(), "fsproxy-cache"),
                 TimeSpan.FromHours(24)),
@@ -642,7 +677,7 @@ builder.Services.AddHttpClient("mercadopublico")
 // appsettings.json — everything EXCEPT ApiKey; see §2 for where ApiKey comes from
 {
   "FsProxy": {
-    "BaseAddress": "https://proxy-qa.falconsoft.cl",
+    "BaseAddress": "https://proxy-api-qa.falcontenders.com",
     "Tags": [ "country:cl" ],
     "PoolSize": 50,
     "RefreshInterval": "00:01:30",
@@ -688,6 +723,11 @@ builder.Services.AddFsProxyClient(builder.Configuration.GetSection("FsProxy"), o
 
 `configureOptions` runs after binding and before `Validate()`, so it can also override anything else
 configuration already set — it is a general escape hatch, not only for `SnapshotCache`.
+
+As in §2/§3, this only protects the tag set(s) you actually pass to `WarmupAsync`. If this service
+leases against per-call tag sets rather than `ProxyClientOptions.Tags`, warm each of them the same
+way §2 shows — from the same `IHostedService` that already calls the parameterless `WarmupAsync()`,
+loop `WarmupAsync(tags)` over every tag set this service will ever call `GetProxies`/`Lease` with.
 
 **Read §8 before wiring this onto a client that also carries Polly, correlation-id propagation, or
 relies on `IHttpClientFactory`'s own request logging** — `AddFsProxyRotation`'s handler has a real,
