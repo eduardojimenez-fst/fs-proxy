@@ -127,7 +127,7 @@ configuration binding (§5, Level 2) is a convenience on top, never a requiremen
 | `FeedbackBatchSize` | `int` | `50` | Events per flush. The service's batch endpoint caps a submission at 200. `Validate()` throws outside `[1, 200]`. |
 | `FeedbackQueueCapacity` | `int` | `10,000` | Bound on the in-memory feedback queue; overflow drops the event rather than blocking the scrape. |
 | `SuccessSampling` | `double` | `0` | Fraction of `Success` outcomes actually transmitted, `[0, 1]`. Defaults to 0 — see §7. `Validate()` throws outside `[0, 1]`. |
-| `SnapshotCache` | `IProxySnapshotCache?` | `null` (no fallback) | Opt-in local fallback for the last known-good proxy set (`FileSnapshotCache`, shown in §3). Stores credentials in plaintext by deliberate decision — see the note below the code sample in §3 before wiring one up. |
+| `SnapshotCache` | `IProxySnapshotCache?` | `null` (no fallback) | Opt-in local fallback for the last known-good proxy set (`FileSnapshotCache`, shown in §3). **Inert for any tag set you do not `WarmupAsync` — read only during warmup, written on every refresh; see the subsection below this table.** Stores credentials in plaintext by deliberate decision — see the note below the code sample in §3 before wiring one up. |
 | `ShutdownToken` | `CancellationToken` | `CancellationToken.None` | The ONLY cancellation source `AddFsProxyRotation`'s handler treats as "not the proxy's fault, don't report anything" — see §5. Level 2's DI path (`AddFsProxyClient`) wires this automatically from `IHostApplicationLifetime.ApplicationStopping` when that service is registered; set it by hand for standalone `FsProxyRotationHandler` usage with no DI container, or leave it at the default if there is no shutdown signal to wire up. |
 
 Call `options.Validate()` before use if you build `ProxyClientOptions` by hand (Levels 0/1); it throws
@@ -177,6 +177,24 @@ string[][] tagSetsToWarm =
 ];
 
 await Task.WhenAll(tagSetsToWarm.Select(tags => ProxySource.Instance.WarmupAsync(tags)));
+```
+
+That sample is net10 syntax. §3's audience — the .NET Framework 4.8 scrapers on C# 7.3 — writes the
+same thing without collection expressions, and blocks rather than awaiting, exactly as §3's
+`WarmupAsync().GetAwaiter().GetResult()` does:
+
+```csharp
+var tagSetsToWarm = new[]
+{
+    new[] { ProxyTags.EntityType.Tender, ProxyTags.Country.Chile },
+    new[] { ProxyTags.EntityType.Tender, ProxyTags.OperationType.Attachments, ProxyTags.Country.Chile },
+    new[] { ProxyTags.EntityType.PurchaseOrder, ProxyTags.Country.Chile },
+};
+
+foreach (var tags in tagSetsToWarm)
+{
+    ProxySource.Instance.WarmupAsync(tags).GetAwaiter().GetResult();
+}
 ```
 
 A tag set you never warm this way still *works* — `GetProxies`/`Lease` fill it lazily on first call,
@@ -772,6 +790,12 @@ whether you pass `"Country:CL"` or `"country:cl"` — both address the same pool
   since the last successful fetch, the pool stops serving anything — `GetProxies` returns an empty
   list, `Lease` returns `null`. A 30-second network blip is absorbed; a service outage past 10 minutes
   is a hard failure, by design (silently serving hour-old dead proxies is worse than failing loudly).
+- **A cold start during an outage is the case stale-snapshot serving cannot help with.** The two
+  bullets above are about in-memory state, which a restart throws away. If the process restarts
+  mid-outage, every pool starts empty and there is nothing stale left to serve — unless you
+  configured a `SnapshotCache` **and** warmed that tag set (§2). If `GetProxies` returns empty right
+  after a restart, check that before concluding the service is down: an unwarmed tag set looks
+  exactly the same from here.
 - **Local quarantine.** A proxy reported as anything other than `Success` is set aside in-process for
   `Quarantine` (default 2 minutes) and not offered again until it lapses — this happens immediately,
   client-side, without waiting for a round trip to the server's policy engine. If *every* proxy in a
