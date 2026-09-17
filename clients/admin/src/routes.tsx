@@ -51,6 +51,12 @@ const ManualProxiesListPage = lazyNamed(
   "ManualProxiesListPage",
 );
 const TagCategoriesPage = lazyNamed(() => import("@/pages/proxies/tag-categories"), "TagCategoriesPage");
+const PoliciesPage = lazyNamed(() => import("@/pages/proxies/policies"), "PoliciesPage");
+const ProxyActivityPage = lazyNamed(() => import("@/pages/proxies/activity"), "ProxyActivityPage");
+const HealthCheckTargetsPage = lazyNamed(
+  () => import("@/pages/proxies/health-check-targets"),
+  "HealthCheckTargetsPage",
+);
 const HealthPage = lazyNamed(() => import("@/pages/health/page"), "HealthPage");
 const ImpersonationListPage = lazyNamed(() => import("@/pages/impersonation/list"), "ImpersonationListPage");
 const WebhooksListPage = lazyNamed(() => import("@/pages/webhooks/list"), "WebhooksListPage");
@@ -263,6 +269,30 @@ export function getRouter() {
               element: (
                 <RouteGuard perms={[ProxiesPermissions.Tags.View]}>
                   <TagCategoriesPage />
+                </RouteGuard>
+              ),
+            },
+            {
+              path: "proxies/activity",
+              element: (
+                <RouteGuard perms={[ProxiesPermissions.UsageEvents.View]}>
+                  <ProxyActivityPage />
+                </RouteGuard>
+              ),
+            },
+            {
+              path: "proxies/policies",
+              element: (
+                <RouteGuard perms={[ProxiesPermissions.Policies.View]}>
+                  <PoliciesPage />
+                </RouteGuard>
+              ),
+            },
+            {
+              path: "proxies/health-check-targets",
+              element: (
+                <RouteGuard perms={[ProxiesPermissions.HealthCheckTargets.View]}>
+                  <HealthCheckTargetsPage />
                 </RouteGuard>
               ),
             },

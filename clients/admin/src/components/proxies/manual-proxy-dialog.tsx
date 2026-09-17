@@ -57,14 +57,20 @@ export function ManualProxyDialog({
   });
 
   // Reset the form whenever the target proxy changes (including back to "create"
-  // when the dialog is reopened without a proxy). Username/password are never
-  // pre-filled on edit — the server never returns the plaintext password back,
-  // and a blank password on submit means "keep the current one" (see mutationFn
-  // below), so there's nothing correct to pre-fill anyway.
+  // when the dialog is reopened without a proxy). The username IS pre-filled: the
+  // update is a full replacement, so submitting an untouched form used to wipe it.
+  // The password is not — the server never returns the plaintext back, and a blank
+  // password on submit means "keep the current one" (see mutationFn below).
   useEffect(() => {
     reset(
       proxy
-        ? { host: proxy.host, port: proxy.port, username: "", plaintextPassword: "", tagsInput: proxy.tags.join(", ") }
+        ? {
+            host: proxy.host,
+            port: proxy.port,
+            username: proxy.username ?? "",
+            plaintextPassword: "",
+            tagsInput: proxy.tags.join(", "),
+          }
         : { host: "", port: 3128, username: "", plaintextPassword: "", tagsInput: "" },
     );
   }, [proxy, reset]);
@@ -130,7 +136,7 @@ export function ManualProxyDialog({
               </Field>
             </div>
 
-            <Field id="mp-username" label="Username" error={errors.username?.message}>
+            <Field id="mp-username" label="Username" hint="Clearing this removes the proxy's auth username." error={errors.username?.message}>
               <Input id="mp-username" autoComplete="off" {...register("username")} />
             </Field>
 

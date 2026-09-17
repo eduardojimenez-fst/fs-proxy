@@ -45,7 +45,7 @@ public sealed class PolicyEvaluationServiceTests
             ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporterB.Id, null));
         await db.SaveChangesAsync();
         var renewalService = Substitute.For<IProxyRenewalService>();
-        var sut = new PolicyEvaluationService(db, renewalService);
+        var sut = new PolicyEvaluationService(db, renewalService, new ProxyPolicyResolver(db));
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
@@ -63,7 +63,7 @@ public sealed class PolicyEvaluationServiceTests
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Failure, null, reporter.Id, null));
         await db.SaveChangesAsync();
         var renewalService = Substitute.For<IProxyRenewalService>();
-        var sut = new PolicyEvaluationService(db, renewalService);
+        var sut = new PolicyEvaluationService(db, renewalService, new ProxyPolicyResolver(db));
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
@@ -79,7 +79,7 @@ public sealed class PolicyEvaluationServiceTests
         db.ApiClients.Add(reporter);
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Failure, null, reporter.Id, null));
         await db.SaveChangesAsync();
-        var sut = new PolicyEvaluationService(db, Substitute.For<IProxyRenewalService>());
+        var sut = new PolicyEvaluationService(db, Substitute.For<IProxyRenewalService>(), new ProxyPolicyResolver(db));
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
@@ -95,7 +95,7 @@ public sealed class PolicyEvaluationServiceTests
         db.ApiClients.Add(reporter);
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporter.Id, null));
         await db.SaveChangesAsync();
-        var sut = new PolicyEvaluationService(db, Substitute.For<IProxyRenewalService>());
+        var sut = new PolicyEvaluationService(db, Substitute.For<IProxyRenewalService>(), new ProxyPolicyResolver(db));
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
@@ -111,7 +111,7 @@ public sealed class PolicyEvaluationServiceTests
         db.Proxies.Add(proxy);
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, null, null));
         await db.SaveChangesAsync();
-        var sut = new PolicyEvaluationService(db, Substitute.For<IProxyRenewalService>());
+        var sut = new PolicyEvaluationService(db, Substitute.For<IProxyRenewalService>(), new ProxyPolicyResolver(db));
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 
@@ -128,7 +128,7 @@ public sealed class PolicyEvaluationServiceTests
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporter.Id, null));
         await db.SaveChangesAsync();
         var renewalService = Substitute.For<IProxyRenewalService>();
-        var sut = new PolicyEvaluationService(db, renewalService);
+        var sut = new PolicyEvaluationService(db, renewalService, new ProxyPolicyResolver(db));
 
         // First burst member disables + renews...
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
@@ -159,7 +159,7 @@ public sealed class PolicyEvaluationServiceTests
         db.ProxyUsageEvents.Add(ProxyUsageEvent.Create(proxy.Id, UsageEventSource.ConsumerFeedback, UsageEventOutcome.Banned, null, reporter.Id, null));
         await db.SaveChangesAsync();
         var renewalService = Substitute.For<IProxyRenewalService>();
-        var sut = new PolicyEvaluationService(db, renewalService);
+        var sut = new PolicyEvaluationService(db, renewalService, new ProxyPolicyResolver(db));
 
         await sut.EvaluateAsync(proxy.Id, CancellationToken.None);
 

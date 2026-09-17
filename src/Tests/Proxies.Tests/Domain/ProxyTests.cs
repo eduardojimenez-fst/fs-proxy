@@ -62,7 +62,7 @@ public sealed class ProxyTests
     {
         var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, null, "us", "old-zone");
 
-        proxy.UpdateConnection("5.6.7.8", 9090, ProxyProtocol.Http, "u2", "p2", "ar", "new-zone");
+        proxy.UpdateConnection("5.6.7.8", 9090, ProxyProtocol.Http, "u2", "p2", "ar", "new-zone", kind: null);
 
         proxy.Geolocation.ShouldBe("ar");
         proxy.ProviderGrouping.ShouldBe("new-zone");
@@ -82,7 +82,8 @@ public sealed class ProxyTests
     {
         var proxy = Proxy.Create(Guid.NewGuid(), "1.2.3.4", 8080, ProxyProtocol.Http, null, null, "ext-1");
 
-        proxy.UpdateConnection("1.2.3.4", 8080, ProxyProtocol.Http, null, null, kind: ProxyKind.Residential);
+        proxy.UpdateConnection("1.2.3.4", 8080, ProxyProtocol.Http, null, null,
+            geolocation: null, providerGrouping: null, kind: ProxyKind.Residential);
 
         proxy.Kind.ShouldBe(ProxyKind.Residential);
     }

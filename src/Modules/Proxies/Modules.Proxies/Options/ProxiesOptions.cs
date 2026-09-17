@@ -12,4 +12,12 @@ public sealed class ProxiesOptions
 
     [Range(1, 1440)]
     public int HealthCheckIntervalMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// How long ProxyUsageEvent rows are kept before the daily purge job removes them. Must stay
+    /// comfortably above the widest PolicyProfile.WindowMinutes in use, or the policy engine will
+    /// count against a window whose older events have already been deleted.
+    /// </summary>
+    [Range(1, 3650)]
+    public int UsageEventRetentionDays { get; set; } = 30;
 }

@@ -21,6 +21,7 @@ using FSH.Modules.Proxies.Features.v1.ManualProxies.UpdateManualProxy;
 using FSH.Modules.Proxies.Features.v1.Policies.AssignPolicyToTag;
 using FSH.Modules.Proxies.Features.v1.Policies.CreatePolicyProfile;
 using FSH.Modules.Proxies.Features.v1.Policies.DeletePolicyProfile;
+using FSH.Modules.Proxies.Features.v1.Policies.GetProxyPolicyResolution;
 using FSH.Modules.Proxies.Features.v1.Policies.ListPolicyProfiles;
 using FSH.Modules.Proxies.Features.v1.Policies.UnassignPolicyFromTag;
 using FSH.Modules.Proxies.Features.v1.Policies.UpdatePolicyProfile;
@@ -49,6 +50,7 @@ using FSH.Modules.Proxies.Features.v1.TagCategories.UpdateTagCategory;
 using FSH.Modules.Proxies.Features.v1.Tags.CreateTag;
 using FSH.Modules.Proxies.Features.v1.Tags.DeleteTag;
 using FSH.Modules.Proxies.Features.v1.Tags.ListTags;
+using FSH.Modules.Proxies.Features.v1.UsageEvents.ListProxyUsageEvents;
 using FSH.Modules.Proxies.Options;
 using FSH.Modules.Proxies.Providers;
 using FSH.Modules.Proxies.Providers.BrightData;
@@ -118,6 +120,7 @@ public sealed class ProxiesModule : IModule
 
         builder.Services.AddScoped<IProviderAccountSyncService, ProviderAccountSyncService>();
         builder.Services.AddScoped<IProxyRenewalService, ProxyRenewalService>();
+        builder.Services.AddScoped<IProxyPolicyResolver, ProxyPolicyResolver>();
         builder.Services.AddScoped<IPolicyEvaluationService, PolicyEvaluationService>();
 
         builder.Services.AddOptions<ProxiesOptions>()
@@ -233,6 +236,9 @@ public sealed class ProxiesModule : IModule
         group.MapDeleteApiClientEndpoint();
         group.MapListApiClientsEndpoint();
 
+        group.MapListProxyUsageEventsEndpoint();
+        group.MapGetProxyPolicyResolutionEndpoint();
+
         // Hourly periodic sync of every enabled provider account — mirrors Files'
         // PurgeOrphanedFilesJob registration exactly.
         var jobManager = endpoints.ServiceProvider.GetService<IRecurringJobManager>();
@@ -249,6 +255,14 @@ public sealed class ProxiesModule : IModule
                 "proxies-active-health-check",
                 j => j.RunAsync(CancellationToken.None),
                 "*/15 * * * *",
+                new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
+            // Retention for the append-only usage-event log. Off-peak so the batched deletes do
+            // not contend with the health check or consumer feedback writes.
+            jobManager.AddOrUpdate<Jobs.PurgeProxyUsageEventsJob>(
+                "proxies-purge-usage-events",
+                j => j.RunAsync(CancellationToken.None),
+                "30 3 * * *", // daily at 03:30 UTC
                 new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
         }
     }

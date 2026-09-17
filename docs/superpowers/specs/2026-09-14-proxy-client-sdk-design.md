@@ -322,6 +322,12 @@ guide's §5 for the DI overload that reaches it). **The integration guide's own 
 comparing the two understands why they differ instead of silently trusting whichever one they saw
 first.
 
+> **Errata, 2026-09-16:** the host below, `proxy-qa.falconsoft.cl`, never existed and does not
+> resolve. QA is `https://proxy-api-qa.falcontenders.com`, Production is
+> `https://proxy-api.falcontenders.com`. Corrected here rather than in the sample because this is a
+> dated design record; the live values are in `docs/integration/fs-proxy-client.md`. This matters
+> because the shipped package readme links straight to this document.
+
 ```json
 "FsProxy": {
   "BaseAddress": "https://proxy-qa.falconsoft.cl",

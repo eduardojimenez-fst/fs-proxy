@@ -3,8 +3,6 @@ using FSH.Modules.Proxies.Contracts;
 
 namespace FSH.Modules.Proxies.Domain;
 
-public enum UsageEventSource { SystemHealthCheck, ConsumerFeedback }
-
 public sealed class ProxyUsageEvent : BaseEntity<Guid>, IGlobalEntity
 {
     public Guid ProxyId { get; private set; }

@@ -10,10 +10,22 @@ namespace FSH.Proxy.Client;
 /// </summary>
 public sealed class ProxyClientOptions
 {
-    /// <summary>Root of the proxy service, e.g. <c>https://proxy-qa.falconsoft.cl</c>.</summary>
+    /// <summary>Root of the proxy service, e.g. <c>https://proxy-api-qa.falcontenders.com</c>.</summary>
     public Uri? BaseAddress { get; set; }
 
-    /// <summary>The scraper's own API key. Supply from an environment variable, never from a config file.</summary>
+    /// <summary>
+    /// The scraper's own API key. Bindable from configuration like every other option here — an
+    /// <c>"ApiKey"</c> entry in the <c>FsProxy</c> section is supported and supported deliberately.
+    /// </summary>
+    /// <remarks>
+    /// These are internal systems on an internal network, and the alternative — every host needing a
+    /// correctly-injected environment variable before it can lease a single proxy — costs more in
+    /// misconfigured deployments than it buys. An environment variable still works and still wins
+    /// where a host prefers it (<c>FsProxy__ApiKey</c> through the ordinary configuration pipeline, or
+    /// whatever name a Level-0 caller reads by hand), so a deployment that already injects one keeps
+    /// working unchanged. If you put the key in a committed file, that file's exposure is now the
+    /// key's exposure: rotate through the FS Proxy admin rather than treating it as a secret.
+    /// </remarks>
     public string? ApiKey { get; set; }
 
     /// <summary>Tags this client leases against when none are passed explicitly.</summary>
@@ -56,12 +68,20 @@ public sealed class ProxyClientOptions
     public double SuccessSampling { get; set; }
 
     /// <summary>
-    /// Local fallback for the last known-good proxy set, consulted when the service is unreachable
-    /// (most importantly, at startup — see <see cref="FileSnapshotCache"/>). Defaults to
-    /// <see langword="null"/>, i.e. no local fallback: a service outage is then a hard failure,
-    /// same as before this cache existed. Opt in with a <see cref="FileSnapshotCache"/>, or a custom
-    /// <see cref="IProxySnapshotCache"/>.
+    /// Local fallback for the last known-good proxy set. Defaults to <see langword="null"/>, i.e. no
+    /// local fallback: a service outage is then a hard failure, same as before this cache existed.
+    /// Opt in with a <see cref="FileSnapshotCache"/>, or a custom <see cref="IProxySnapshotCache"/>.
     /// </summary>
+    /// <remarks>
+    /// <b>Read only during warmup.</b> This cache is consulted exclusively from
+    /// <c>IProxySource.WarmupAsync</c> (either overload) — never from <c>GetProxies</c>/<c>Lease</c>,
+    /// which are deliberately synchronous and perform no I/O, cache reads included. Every successful
+    /// fetch — warmup or background refresh — writes through to this cache regardless, so a caller
+    /// that configures <see cref="SnapshotCache"/> but never calls <c>WarmupAsync</c> for a given tag
+    /// set gets a cache that is faithfully WRITTEN to and NEVER READ for that tag set — no outage
+    /// protection at all, no matter how current the on-disk snapshot is. Warm every tag set you
+    /// intend to lease against if you want this cache to actually do anything for it.
+    /// </remarks>
     public IProxySnapshotCache? SnapshotCache { get; set; }
 
     /// <summary>

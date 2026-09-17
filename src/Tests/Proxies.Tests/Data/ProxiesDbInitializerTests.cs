@@ -151,6 +151,47 @@ public sealed class ProxiesDbInitializerTests
         (await db.TagCategories.CountAsync()).ShouldBe(5);
     }
 
+    [Fact]
+    public async Task SeedAsync_Should_SeedOneSlackDefaultPolicy_LeftUnassignedToEveryTag()
+    {
+        await using var db = CreateDb();
+        var sut = CreateSut(db, [], isDevelopment: false);
+
+        await sut.SeedAsync(CancellationToken.None);
+
+        var profile = await db.PolicyProfiles.SingleAsync();
+        profile.Name.ShouldBe(ProxiesDbInitializer.DefaultPolicyProfileName);
+        // AutoDisable, not AutoDisableAndRenew: renewal spends real provider inventory.
+        profile.Type.ShouldBe(ProxyPolicyTypeUnderTest);
+        profile.FailureThreshold.ShouldBe(20);
+        profile.WindowMinutes.ShouldBe(60);
+        profile.MinDistinctReporters.ShouldBe(2);
+
+        // The seed must not arm anything: a profile only acts through a tag assignment.
+        (await db.Set<TagPolicyAssignment>().AnyAsync()).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task SeedAsync_Should_NotRecreateTheDefaultPolicy_When_OperatorRetunedIt()
+    {
+        await using var db = CreateDb();
+        var sut = CreateSut(db, [], isDevelopment: false);
+        await sut.SeedAsync(CancellationToken.None);
+
+        var profile = await db.PolicyProfiles.SingleAsync();
+        profile.Update("Tuned by hand", ProxyPolicyTypeUnderTest, 3, 15, 1);
+        await db.SaveChangesAsync();
+
+        await sut.SeedAsync(CancellationToken.None);
+
+        var after = await db.PolicyProfiles.SingleAsync();
+        after.Name.ShouldBe("Tuned by hand");
+        after.FailureThreshold.ShouldBe(3);
+    }
+
+    private const FSH.Modules.Proxies.Contracts.PolicyProfileType ProxyPolicyTypeUnderTest =
+        FSH.Modules.Proxies.Contracts.PolicyProfileType.AutoDisable;
+
     private sealed class FakeSecretProtector : IProxySecretProtector
     {
         public string Protect(string plaintext) => $"protected:{plaintext}";

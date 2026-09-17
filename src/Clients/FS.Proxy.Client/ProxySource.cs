@@ -237,7 +237,10 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable, IDisposable
     /// <see cref="ProxyClientOptions.Tags"/> itself is documented to mean ("tags this client leases
     /// against when none are passed explicitly"). Without this, <c>GetProxies()</c>/<c>Lease()</c>
     /// with no arguments would create and lease from a separate, untagged pool instead of the
-    /// configured default — silently handing back proxies for the wrong country/entity type.
+    /// configured default — silently handing back proxies for the wrong country/entity type. Also
+    /// used by <see cref="WarmupAsync(string[], CancellationToken)"/>, so a <see langword="null"/>/empty
+    /// <c>tags</c> argument there warms the exact same default pool this fallback resolves to — not a
+    /// second, separately-invented convention for "caller supplied none."
     /// </summary>
     private string[] EffectiveTags(string[]? tags) => tags is null || tags.Length == 0 ? _options.Tags : tags;
 
@@ -309,10 +312,18 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task WarmupAsync(CancellationToken ct = default)
+    /// <remarks>
+    /// Reimplemented in terms of <see cref="WarmupAsync(string[], CancellationToken)"/>, passing
+    /// <c>_options.Tags</c> — exactly one warmup code path, rather than two that could quietly drift
+    /// apart (e.g. one consulting <c>SnapshotCache</c> and the other not).
+    /// </remarks>
+    public Task WarmupAsync(CancellationToken ct = default) => WarmupAsync(_options.Tags, ct);
+
+    /// <inheritdoc />
+    public async Task WarmupAsync(string[] tags, CancellationToken ct = default)
     {
         EnsureFeedbackTimerStarted();
-        PoolEntry entry = GetOrCreatePoolEntry(_options.Tags);
+        PoolEntry entry = GetOrCreatePoolEntry(EffectiveTags(tags));
         await entry.Pool.WarmupAsync(ct).ConfigureAwait(false);
     }
 
@@ -323,7 +334,7 @@ public sealed class ProxySource : IProxySource, IAsyncDisposable, IDisposable
     /// </summary>
     /// <remarks>
     /// A brand-new pool's refresh timer is started right here, at creation — not only from
-    /// <see cref="WarmupAsync"/> — so that a tag set discovered purely through
+    /// <see cref="WarmupAsync(CancellationToken)"/> — so that a tag set discovered purely through
     /// <see cref="GetProxies"/>/<see cref="Lease"/> (never explicitly warmed) still gets periodic
     /// refreshes going forward, not just the one-off reactive refresh <see cref="MaybeTriggerReactiveRefresh"/>
     /// dispatches for it. Without this, spec's 60-120s-with-jitter refresh requirement would only ever

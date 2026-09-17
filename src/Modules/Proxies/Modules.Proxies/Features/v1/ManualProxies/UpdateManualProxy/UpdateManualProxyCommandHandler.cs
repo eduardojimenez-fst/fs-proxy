@@ -36,7 +36,11 @@ public sealed class UpdateManualProxyCommandHandler(
             proxy.AssignTag(tagId);
         }
 
-        proxy.UpdateConnection(command.Host, command.Port, command.Protocol, command.Username, protectedPassword);
+        // Geolocation/grouping/kind are not part of this command (they are provider- or
+        // health-check-derived), so carry the current values through rather than blanking them.
+        proxy.UpdateConnection(
+            command.Host, command.Port, command.Protocol, command.Username, protectedPassword,
+            proxy.Geolocation, proxy.ProviderGrouping, proxy.Kind);
 
         await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         return Unit.Value;

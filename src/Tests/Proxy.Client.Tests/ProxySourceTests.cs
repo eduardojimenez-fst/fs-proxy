@@ -1,4 +1,5 @@
 using FSH.Proxy.Client;
+using FSH.Proxy.Client.Caching;
 using FSH.Proxy.Client.Transport;
 using NSubstitute;
 using Shouldly;
@@ -797,6 +798,123 @@ public sealed class ProxySourceTests
 
         Timer? timer = source.GetRefreshTimerForTests(["country:mx"]);
         timer.ShouldNotBeNull("a pool discovered purely through GetProxies must start a standing refresh timer, not rely solely on reactive refresh.");
+    }
+
+    // --- Tag-aware warmup: IProxySource.WarmupAsync(string[], CancellationToken) ---
+
+    // The same-pool proof this feature is worthless without: warming tag set X must land on the
+    // EXACT same pool GetProxies(X) later reads. Warms with one order/casing and reads with
+    // another, so a regression that made WarmupAsync's tag-set key derivation diverge from
+    // GetOrCreatePoolEntry/BuildKey's own normalization — even subtly — shows up as an empty
+    // result here, not a false pass.
+    [Fact]
+    public async Task WarmupAsync_Tags_Should_Warm_The_Same_Pool_GetProxies_Later_Reads_Regardless_Of_Order_Or_Casing()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        // Deliberately NOT the configured default tags — this pins the TAG-SCOPED overload, not
+        // the parameterless one falling back to _options.Tags.
+        options.Tags = ["country:mx"];
+        await using var source = new ProxySource(options, client);
+
+        await source.WarmupAsync(["b", "a"]);
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies("A", "B");
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue(
+            "GetProxies(\"A\",\"B\") must read the exact pool WarmupAsync([\"b\",\"a\"]) filled.");
+        // Exactly one transport call: if the two calls had landed on different pools, GetProxies
+        // would be reading a brand-new, never-warmed pool instead of sharing this one.
+        _ = client.Received(1).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // The actual point of the change: a warmed non-default tag set falls back to SnapshotCache when
+    // the service is unreachable, and GetProxies for that same tag set serves the CACHED endpoints —
+    // not merely that Read() was invoked. Options.Tags is deliberately a different tag set than the
+    // one warmed/read, so this cannot pass by accident via the parameterless overload's own path.
+    [Fact]
+    public async Task WarmupAsync_Tags_Should_Fall_Back_To_The_SnapshotCache_When_The_Service_Is_Unreachable()
+    {
+        var cached = Endpoints(2);
+        var cache = Substitute.For<IProxySnapshotCache>();
+        cache.Read(Arg.Any<string>()).Returns(cached);
+        var client = Substitute.For<IProxyServiceClient>();
+        client.RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<IReadOnlyList<ProxyEndpoint>>(new HttpRequestException("service down")));
+        var options = Options();
+        options.SnapshotCache = cache;
+        options.Tags = ["country:cl"]; // the default tag set — deliberately different from the one below
+        await using var source = new ProxySource(options, client);
+
+        await source.WarmupAsync(["country:mx"]);
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies("country:mx");
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(cached.Select(e => e.Id)).ShouldBeTrue(
+            "a warmed tag set must serve the SnapshotCache's endpoints when the service is unreachable.");
+    }
+
+    // Regression guard for "reimplemented in terms of the new overload": the parameterless
+    // WarmupAsync() must still warm _options.Tags, and only _options.Tags — asserted directly
+    // against the tags argument the transport actually received, not just against GetProxies'
+    // fallback (which would also mask a wrong tag set reaching the transport).
+    [Fact]
+    public async Task WarmupAsync_With_No_Args_Should_Still_Warm_Exactly_The_Configured_Default_Tags()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl", "entitytype:tender"];
+        await using var source = new ProxySource(options, client);
+
+        await source.WarmupAsync();
+
+        _ = client.Received(1).RequestAsync(
+            Arg.Is<IReadOnlyList<string>>(tags => tags.SequenceEqual(options.Tags)),
+            options.PoolSize,
+            Arg.Any<CancellationToken>());
+    }
+
+    // Empty tags follow EffectiveTags' existing "caller supplied none" convention: fall back to
+    // ProxyClientOptions.Tags, exactly like GetProxies()/Lease() with no arguments — not a second,
+    // separately-invented rule (e.g. warming a distinct untagged pool).
+    [Fact]
+    public async Task WarmupAsync_Tags_With_An_Empty_Array_Should_Fall_Back_To_The_Configured_Default_Tags()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+
+        await source.WarmupAsync([]);
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies("country:cl");
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue(
+            "an empty tags argument must warm the configured default pool, not a separate untagged one.");
+        _ = client.Received(1).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    // Companion: same convention for a null tags argument (a caller can pass this from an
+    // uncontrolled/legacy call site despite the parameter's non-nullable annotation).
+    [Fact]
+    public async Task WarmupAsync_Tags_With_Null_Should_Fall_Back_To_The_Configured_Default_Tags()
+    {
+        var endpoints = Endpoints(2);
+        var client = ClientReturning(endpoints);
+        var options = Options();
+        options.PoolSize = 2;
+        options.Tags = ["country:cl"];
+        await using var source = new ProxySource(options, client);
+
+        await source.WarmupAsync(null!);
+        IReadOnlyList<ProxyEndpoint> result = source.GetProxies("country:cl");
+
+        result.Select(e => e.Id).ToHashSet().SetEquals(endpoints.Select(e => e.Id)).ShouldBeTrue(
+            "a null tags argument must warm the configured default pool, not throw or create a separate one.");
+        _ = client.Received(1).RequestAsync(Arg.Any<IReadOnlyList<string>>(), Arg.Any<int>(), Arg.Any<CancellationToken>());
     }
 
     // Extra: the pure jitter calculation ProxySource.NextRefreshDelay wraps around a real Random —

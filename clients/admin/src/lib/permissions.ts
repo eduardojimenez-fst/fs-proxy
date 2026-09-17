@@ -113,6 +113,9 @@ export const ProxiesPermissions = Object.freeze({
     Create: "Permissions.Proxies.ApiClients.Create",
     Delete: "Permissions.Proxies.ApiClients.Delete",
   },
+  UsageEvents: {
+    View: "Permissions.Proxies.UsageEvents.View",
+  },
   Consumers: {
     Request: "Permissions.Proxies.Consumers.Request",
   },
@@ -256,6 +259,12 @@ export const PERMISSION_CATALOG: readonly PermissionGroup[] = [
       { name: ProxiesPermissions.ApiClients.View, description: "View proxy API clients", basic: true },
       { name: ProxiesPermissions.ApiClients.Create, description: "Create proxy API clients" },
       { name: ProxiesPermissions.ApiClients.Delete, description: "Delete proxy API clients" },
+
+      {
+        name: ProxiesPermissions.UsageEvents.View,
+        description: "View proxy usage events (health checks & consumer feedback)",
+        basic: true,
+      },
 
       {
         name: ProxiesPermissions.Consumers.Request,
