@@ -21,7 +21,9 @@ namespace FSH.Modules.Proxies.Services;
 /// is ever changed to become sensitive to <c>Success</c> events, that skip in the batch handler
 /// will silently stop evaluating proxies it should evaluate.
 /// </summary>
-public sealed class PolicyEvaluationService(ProxiesDbContext dbContext, IProxyRenewalService renewalService) : IPolicyEvaluationService
+public sealed class PolicyEvaluationService(
+    ProxiesDbContext dbContext, IProxyRenewalService renewalService, IProxyPolicyResolver policyResolver)
+    : IPolicyEvaluationService
 {
     public async Task EvaluateAsync(Guid proxyId, CancellationToken cancellationToken)
     {
@@ -40,15 +42,9 @@ public sealed class PolicyEvaluationService(ProxiesDbContext dbContext, IProxyRe
         //    policy window — without this guard the very next event would disable-and-renew again.
         if (proxy.Status != ProxyStatus.Active) return;
 
-        var tagIds = await dbContext.Set<ProxyTagAssignment>().Where(a => a.ProxyId == proxyId).Select(a => a.TagId).ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (tagIds.Count == 0) return;
-
-        // Most-restrictive-wins conflict rule from the spec: rank AutoDisableAndRenew(2) > AutoDisable(1) > Manual(0).
-        var policy = await dbContext.Set<TagPolicyAssignment>()
-            .Where(a => tagIds.Contains(a.TagId))
-            .Join(dbContext.PolicyProfiles, a => a.PolicyProfileId, p => p.Id, (a, p) => p)
-            .ToListAsync(cancellationToken).ConfigureAwait(false);
-        var resolved = policy.OrderByDescending(p => p.RestrictivenessRank).FirstOrDefault();
+        // Resolution (tags → profile, most-restrictive-wins) lives in IProxyPolicyResolver so the
+        // admin UI can explain the same decision this method acts on. See ProxyPolicyResolver.
+        var resolved = (await policyResolver.ResolveAsync(proxyId, cancellationToken).ConfigureAwait(false)).Winner;
         if (resolved is null || resolved.Type == PolicyProfileType.Manual) return;
 
         var windowStart = DateTime.UtcNow.AddMinutes(-resolved.WindowMinutes);

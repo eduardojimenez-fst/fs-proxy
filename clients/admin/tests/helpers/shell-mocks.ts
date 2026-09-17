@@ -38,6 +38,7 @@ export const ADMIN_PERMS = [
   "Permissions.Webhooks.Create",
   "Permissions.Webhooks.Delete",
   "Permissions.Webhooks.Test",
+  "Permissions.Proxies.UsageEvents.View",
   "Permissions.Proxies.ProviderAccounts.View",
   "Permissions.Proxies.ProviderAccounts.Create",
   "Permissions.Proxies.ProviderAccounts.Update",
@@ -50,6 +51,14 @@ export const ADMIN_PERMS = [
   "Permissions.Proxies.Tags.Create",
   "Permissions.Proxies.Tags.Update",
   "Permissions.Proxies.Tags.Delete",
+  "Permissions.Proxies.Policies.View",
+  "Permissions.Proxies.Policies.Create",
+  "Permissions.Proxies.Policies.Update",
+  "Permissions.Proxies.Policies.Delete",
+  "Permissions.Proxies.HealthCheckTargets.View",
+  "Permissions.Proxies.HealthCheckTargets.Create",
+  "Permissions.Proxies.HealthCheckTargets.Update",
+  "Permissions.Proxies.HealthCheckTargets.Delete",
 ] as const;
 
 export const ADMIN_PROFILE = {

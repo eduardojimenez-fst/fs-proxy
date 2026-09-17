@@ -23,6 +23,9 @@ public sealed partial class ProxiesDbInitializer(
     private const string BrightDataDevAccountName = "Bright Data - JP - datacenter_new_proxy_manager (dev seed)";
     private const string WebShareDevAccountName = "WebShare JP - (dev seed)";
 
+    /// <summary>Name of the seeded default profile. Public so tests and tooling can identify it.</summary>
+    public const string DefaultPolicyProfileName = "Default (holgada) — 20 fallos / 60 min / 2 reporters";
+
     public async Task MigrateAsync(CancellationToken cancellationToken)
     {
         if ((await dbContext.Database.GetPendingMigrationsAsync(cancellationToken).ConfigureAwait(false)).Any())
@@ -42,6 +45,7 @@ public sealed partial class ProxiesDbInitializer(
         }
 
         await SeedTagCategoriesAsync(cancellationToken).ConfigureAwait(false);
+        await SeedDefaultPolicyProfileAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task SeedManualProviderAccountAsync(CancellationToken cancellationToken)
@@ -125,6 +129,40 @@ public sealed partial class ProxiesDbInitializer(
         LogSeededTagCategories(logger, TagCategorySeedData.Categories.Count);
     }
 
+    /// <summary>
+    /// Seeds one deliberately slack policy profile so the auto-disable machinery can be exercised
+    /// end to end without becoming a hazard: 20 failures inside 60 minutes, corroborated by at
+    /// least 2 distinct reporters, and <see cref="PolicyProfileType.AutoDisable"/> rather than
+    /// AutoDisableAndRenew — renewal calls the provider's API and spends real inventory.
+    ///
+    /// Deliberately left UNASSIGNED to every tag. A profile only acts on proxies through a tag
+    /// assignment, so seeding it alone changes nothing about a running system; assigning it is a
+    /// one-click, reversible decision on the Policies page. Seeding an *assignment* would silently
+    /// arm auto-disabling across an existing fleet on the next deploy, which is exactly the risk
+    /// this seed is meant to avoid.
+    ///
+    /// Idempotent by name: an operator who retunes or deletes it will not have it reappear with
+    /// the original numbers on the next migrate/seed run.
+    /// </summary>
+    private async Task SeedDefaultPolicyProfileAsync(CancellationToken cancellationToken)
+    {
+        if (await dbContext.PolicyProfiles.AnyAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var profile = PolicyProfile.Create(
+            DefaultPolicyProfileName,
+            PolicyProfileType.AutoDisable,
+            failureThreshold: 20,
+            windowMinutes: 60,
+            minDistinctReporters: 2);
+
+        dbContext.PolicyProfiles.Add(profile);
+        await dbContext.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        LogSeededDefaultPolicy(logger, DefaultPolicyProfileName);
+    }
+
     // LoggerMessage source-gen: compile-time templates avoid CA1873 (eager arg eval).
     [LoggerMessage(EventId = 1, Level = LogLevel.Information, Message = "[Proxies] applied migrations")]
     private static partial void LogAppliedMigrations(ILogger logger);
@@ -137,4 +175,10 @@ public sealed partial class ProxiesDbInitializer(
 
     [LoggerMessage(EventId = 4, Level = LogLevel.Information, Message = "Seeded {Count} default tag categories.")]
     private static partial void LogSeededTagCategories(ILogger logger, int count);
+
+    [LoggerMessage(
+        EventId = 5,
+        Level = LogLevel.Information,
+        Message = "Seeded the default policy profile '{ProfileName}'. It is not assigned to any tag yet, so nothing is auto-disabled until an operator assigns it.")]
+    private static partial void LogSeededDefaultPolicy(ILogger logger, string profileName);
 }

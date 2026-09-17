@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Globe, RefreshCw, Tag as TagIcon, X } from "lucide-react";
+import { Activity, Globe, RefreshCw, Tag as TagIcon, X } from "lucide-react";
 import { EntityPageHeader, ErrorBand, LoadingRow, Pagination } from "@/components/list";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { countryFlag } from "@/lib/country-flag";
 import { ProxiesPermissions } from "@/lib/permissions";
 import { useAuth } from "@/auth/use-auth";
 import { ProxyTagsDialog } from "@/components/proxies/proxy-tags-dialog";
+import { ProxyUsageEventsDialog } from "@/components/proxies/proxy-usage-events-dialog";
 import { BulkTagDialog } from "@/components/proxies/bulk-tag-dialog";
 import {
   disableProxies,
@@ -37,8 +38,10 @@ const STATUS_OPTIONS: { value: ProxyStatus; label: string }[] = [
   { value: "Retired", label: "Retired" },
 ];
 
-// Desktop grid template — shared by header + rows.
-const DESKTOP_COLS = "grid-cols-[24px_1.3fr_100px_1.2fr_1.4fr_120px]";
+// Desktop grid template — shared by header + rows. User gets the widest share: provider
+// usernames run long (BrightData's are ~75 chars) and operators read them to identify a
+// proxy, so the column is sized to fit one wrapped onto two lines.
+const DESKTOP_COLS = "grid-cols-[24px_1.45fr_1.95fr_110px_0.95fr_0.9fr_168px]";
 
 function describeError(err: unknown): string {
   if (err instanceof ApiRequestError) return err.problem?.detail ?? err.problem?.title ?? err.message;
@@ -75,9 +78,14 @@ export function ProxiesListPage() {
   const [providerAccountId, setProviderAccountId] = useState("");
   const [geolocationInput, setGeolocationInput] = useState("");
   const [geolocation, setGeolocation] = useState("");
+  const [hostInput, setHostInput] = useState("");
+  const [host, setHost] = useState("");
+  const [usernameInput, setUsernameInput] = useState("");
+  const [username, setUsername] = useState("");
   const [kind, setKind] = useState<ProxyKind | "">("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [tagsDialogProxy, setTagsDialogProxy] = useState<ProxyDto | null>(null);
+  const [activityDialogProxy, setActivityDialogProxy] = useState<ProxyDto | null>(null);
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
 
   const tagCategoriesQuery = useQuery({
@@ -108,6 +116,22 @@ export function ProxiesListPage() {
     return () => clearTimeout(t);
   }, [geolocationInput]);
 
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setHost(hostInput.trim());
+      setPageNumber(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [hostInput]);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setUsername(usernameInput.trim());
+      setPageNumber(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [usernameInput]);
+
   // Reset to page 1 whenever a dropdown filter changes.
   useEffect(() => {
     setPageNumber(1);
@@ -115,6 +139,7 @@ export function ProxiesListPage() {
 
   const canUpdate = user?.permissions.includes(ProxiesPermissions.ManualProxies.Update) ?? false;
   const canManageTags = user?.permissions.includes(ProxiesPermissions.Tags.Update) ?? false;
+  const canViewActivity = user?.permissions.includes(ProxiesPermissions.UsageEvents.View) ?? false;
   const canSelect = canUpdate || canManageTags;
 
   const providerAccountsQuery = useQuery({
@@ -124,7 +149,7 @@ export function ProxiesListPage() {
   });
 
   const proxiesQuery = useQuery({
-    queryKey: ["proxies", "list", { pageNumber, tags, status, providerAccountId, geolocation, kind }],
+    queryKey: ["proxies", "list", { pageNumber, tags, status, providerAccountId, geolocation, kind, host, username }],
     queryFn: () =>
       listProxies({
         pageNumber,
@@ -134,6 +159,8 @@ export function ProxiesListPage() {
         providerAccountId: providerAccountId || undefined,
         geolocation: geolocation || undefined,
         kind: kind || undefined,
+        host: host || undefined,
+        username: username || undefined,
       }),
     placeholderData: keepPreviousData,
   });
@@ -186,7 +213,14 @@ export function ProxiesListPage() {
     });
   }
 
-  const filtersActive = tags.length > 0 || status !== "" || providerAccountId !== "" || geolocation !== "" || kind !== "";
+  const filtersActive =
+    tags.length > 0 ||
+    status !== "" ||
+    providerAccountId !== "" ||
+    geolocation !== "" ||
+    kind !== "" ||
+    host !== "" ||
+    username !== "";
 
   const clearFilters = () => {
     setTags([]);
@@ -196,6 +230,8 @@ export function ProxiesListPage() {
     setStatus("");
     setProviderAccountId("");
     setGeolocationInput("");
+    setHostInput("");
+    setUsernameInput("");
     setKind("");
   };
 
@@ -305,22 +341,32 @@ export function ProxiesListPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <label
-            htmlFor="proxies-geolocation"
-            className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
-          >
-            Geolocation
-          </label>
-          <input
-            id="proxies-geolocation"
-            type="search"
-            placeholder="CL"
-            value={geolocationInput}
-            onChange={(e) => setGeolocationInput(e.target.value)}
-            className="h-9 w-24 max-w-full rounded-md border border-[var(--color-input)] bg-transparent px-3 font-mono text-[12.5px] outline-none transition-colors placeholder:text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)] focus-visible:border-[var(--color-ring)] focus-visible:ring-[3px] focus-visible:ring-[oklch(from_var(--color-ring)_l_c_h_/_0.5)]"
-          />
-        </div>
+        <FilterSearchInput
+          id="proxies-host"
+          label="Host"
+          placeholder="10.0.0."
+          value={hostInput}
+          onChange={setHostInput}
+          width="w-40"
+        />
+
+        <FilterSearchInput
+          id="proxies-username"
+          label="User"
+          placeholder="ip-136.242."
+          value={usernameInput}
+          onChange={setUsernameInput}
+          width="w-56"
+        />
+
+        <FilterSearchInput
+          id="proxies-geolocation"
+          label="Geolocation"
+          placeholder="CL"
+          value={geolocationInput}
+          onChange={setGeolocationInput}
+          width="w-24"
+        />
 
         <Select
           label="Status"
@@ -416,7 +462,7 @@ export function ProxiesListPage() {
           title="No proxies match these filters."
           description={
             filtersActive
-              ? "Try clearing the tag, status, or provider account filter."
+              ? "Try clearing the host, user, tag, status, or provider account filter."
               : "Connect a provider account or add a manual proxy to populate this list."
           }
           action={
@@ -441,11 +487,13 @@ export function ProxiesListPage() {
                 canUpdate={canUpdate}
                 canManageTags={canManageTags}
                 canSelect={canSelect}
+                canViewActivity={canViewActivity}
                 busy={mutationBusy}
                 onToggleSelected={() => toggleSelected(proxy.id)}
                 onEnable={() => enableMutation.mutate({ proxyIds: [proxy.id] })}
                 onDisable={() => disableMutation.mutate({ proxyIds: [proxy.id] })}
                 onEditTags={() => setTagsDialogProxy(proxy)}
+                onViewActivity={() => setActivityDialogProxy(proxy)}
               />
             ))}
           </div>
@@ -472,7 +520,13 @@ export function ProxiesListPage() {
                 Host
               </span>
               <span className="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
-                Status
+                User
+              </span>
+              <span
+                className="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]"
+                title="Status, and successful / failed events in the last 24 hours"
+              >
+                Status · 24h
               </span>
               <span className="text-[11.5px] font-semibold uppercase tracking-wider text-[var(--color-muted-foreground)]">
                 Provider
@@ -492,11 +546,13 @@ export function ProxiesListPage() {
                   canUpdate={canUpdate}
                   canManageTags={canManageTags}
                   canSelect={canSelect}
+                  canViewActivity={canViewActivity}
                   busy={mutationBusy}
                   onToggleSelected={() => toggleSelected(proxy.id)}
                   onEnable={() => enableMutation.mutate({ proxyIds: [proxy.id] })}
                   onDisable={() => disableMutation.mutate({ proxyIds: [proxy.id] })}
                   onEditTags={() => setTagsDialogProxy(proxy)}
+                  onViewActivity={() => setActivityDialogProxy(proxy)}
                 />
               ))}
             </ol>
@@ -520,7 +576,84 @@ export function ProxiesListPage() {
       )}
 
       <ProxyTagsDialog open={tagsDialogProxy !== null} proxy={tagsDialogProxy} onClose={() => setTagsDialogProxy(null)} />
+      <ProxyUsageEventsDialog
+        open={activityDialogProxy !== null}
+        proxy={activityDialogProxy}
+        onClose={() => setActivityDialogProxy(null)}
+      />
       <BulkTagDialog open={bulkTagDialogOpen} proxyIds={[...selected]} onClose={() => setBulkTagDialogOpen(false)} />
+    </div>
+  );
+}
+
+// ─── 24h health ─────────────────────────────────────────────────────────
+
+/**
+ * Rolling 24h outcome counts. "No events" is deliberately rendered as a dash rather than "0/0":
+ * a freshly-synced proxy nobody has probed yet is not the same as one that is failing.
+ */
+function ProxyHealth24h({ proxy }: { proxy: ProxyDto }) {
+  const { successCount24h: ok, failureCount24h: failed } = proxy;
+  if (ok === 0 && failed === 0) {
+    return (
+      <span className="block text-[12px] text-[var(--color-muted-foreground)]" title="No events in the last 24 hours">
+        —
+      </span>
+    );
+  }
+  const total = ok + failed;
+  const failureRate = Math.round((failed / total) * 100);
+  return (
+    <span
+      className="block font-mono text-[11.5px] whitespace-nowrap"
+      title={`${ok} successful / ${failed} failed in the last 24h (${failureRate}% failures)`}
+    >
+      <span className="text-[var(--color-success)]">{ok}</span>
+      <span className="text-[var(--color-muted-foreground)]">{" / "}</span>
+      <span className={failed > 0 ? "text-[var(--color-destructive)]" : "text-[var(--color-muted-foreground)]"}>
+        {failed}
+      </span>
+    </span>
+  );
+}
+
+// ─── Filter input ───────────────────────────────────────────────────────
+
+/** Debouncing lives in the page (one effect per field); this is presentation only. */
+function FilterSearchInput({
+  id,
+  label,
+  placeholder,
+  value,
+  onChange,
+  width,
+}: {
+  id: string;
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+  width: string;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label
+        htmlFor={id}
+        className="font-mono text-[0.6875rem] uppercase tracking-[0.18em] text-[var(--color-muted-foreground)]"
+      >
+        {label}
+      </label>
+      <input
+        id={id}
+        type="search"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          "h-9 max-w-full rounded-md border border-[var(--color-input)] bg-transparent px-3 font-mono text-[12.5px] outline-none transition-colors placeholder:text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)] focus-visible:border-[var(--color-ring)] focus-visible:ring-[3px] focus-visible:ring-[oklch(from_var(--color-ring)_l_c_h_/_0.5)]",
+          width,
+        )}
+      />
     </div>
   );
 }
@@ -533,22 +666,26 @@ function ProxyDesktopRow({
   canUpdate,
   canManageTags,
   canSelect,
+  canViewActivity,
   busy,
   onToggleSelected,
   onEnable,
   onDisable,
   onEditTags,
+  onViewActivity,
 }: {
   proxy: ProxyDto;
   selected: boolean;
   canUpdate: boolean;
   canManageTags: boolean;
   canSelect: boolean;
+  canViewActivity: boolean;
   busy: boolean;
   onToggleSelected: () => void;
   onEnable: () => void;
   onDisable: () => void;
   onEditTags: () => void;
+  onViewActivity: () => void;
 }) {
   return (
     <li className="list-none">
@@ -564,7 +701,10 @@ function ProxyDesktopRow({
           <span />
         )}
         <div className="min-w-0">
-          <span className="block truncate font-mono text-[13px] font-medium text-[var(--color-foreground)]">
+          <span
+            className="block truncate font-mono text-[13px] font-medium text-[var(--color-foreground)]"
+            title={`${proxy.host}:${proxy.port}`}
+          >
             {proxy.host}:{proxy.port}
           </span>
           <span className="block truncate font-mono text-[11px] text-[var(--color-muted-foreground)]">
@@ -572,10 +712,26 @@ function ProxyDesktopRow({
             {proxy.kind ? ` · ${proxy.kind}` : ""}
           </span>
         </div>
-        <div>
+        <div className="min-w-0">
+          {/* No `block` on the span: line-clamp needs its own `display:-webkit-box` to take
+              effect. 3 lines fits a full BrightData username down to ~1280px; anything longer
+              ellipsizes rather than growing the row without bound (full value in `title`). */}
+          {proxy.username ? (
+            <span
+              className="line-clamp-3 break-all font-mono text-[12px] leading-[1.35] text-[var(--color-foreground)]"
+              title={proxy.username}
+            >
+              {proxy.username}
+            </span>
+          ) : (
+            <span className="text-[12px] text-[var(--color-muted-foreground)]">—</span>
+          )}
+        </div>
+        <div className="space-y-1">
           <Badge variant={statusBadgeVariant(proxy.status)} className="font-mono uppercase tracking-[0.14em]">
             {proxy.status}
           </Badge>
+          <ProxyHealth24h proxy={proxy} />
         </div>
         <div className="min-w-0">
           <span className="block truncate text-[13px] text-[var(--color-foreground)]">
@@ -597,6 +753,16 @@ function ProxyDesktopRow({
           )}
         </div>
         <div className="flex items-center justify-end gap-1">
+          {canViewActivity ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onViewActivity}
+              aria-label={`View activity for ${proxy.host}:${proxy.port}`}
+            >
+              <Activity className="h-3.5 w-3.5" />
+            </Button>
+          ) : null}
           {canManageTags ? (
             <Button variant="ghost" size="sm" onClick={onEditTags}>
               <TagIcon className="h-3.5 w-3.5" />
@@ -628,22 +794,26 @@ function ProxyMobileCard({
   canUpdate,
   canManageTags,
   canSelect,
+  canViewActivity,
   busy,
   onToggleSelected,
   onEnable,
   onDisable,
   onEditTags,
+  onViewActivity,
 }: {
   proxy: ProxyDto;
   selected: boolean;
   canUpdate: boolean;
   canManageTags: boolean;
   canSelect: boolean;
+  canViewActivity: boolean;
   busy: boolean;
   onToggleSelected: () => void;
   onEnable: () => void;
   onDisable: () => void;
   onEditTags: () => void;
+  onViewActivity: () => void;
 }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-card)] p-4 shadow-xs">
@@ -662,6 +832,11 @@ function ProxyMobileCard({
             <p className="truncate font-mono text-[13px] font-medium text-[var(--color-foreground)]">
               {proxy.host}:{proxy.port}
             </p>
+            {proxy.username && (
+              <p className="mt-0.5 break-all font-mono text-[11px] text-[var(--color-foreground)]">
+                user {proxy.username}
+              </p>
+            )}
             <p className="mt-0.5 truncate text-[11px] text-[var(--color-muted-foreground)]">
               {proxy.providerAccountName} (
               {proxy.providerGrouping ? `${proxy.providerType} · ${proxy.providerGrouping}` : proxy.providerType}
@@ -685,8 +860,22 @@ function ProxyMobileCard({
           <span className="text-[11px] text-[var(--color-muted-foreground)]">No tags</span>
         )}
       </div>
-      {(canUpdate || canManageTags) && (
+      <div className="mt-2">
+        <ProxyHealth24h proxy={proxy} />
+      </div>
+      {(canUpdate || canManageTags || canViewActivity) && (
         <div className="mt-3 flex gap-2">
+          {canViewActivity && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onViewActivity}
+              className="flex-1"
+              aria-label={`View activity for ${proxy.host}:${proxy.port}`}
+            >
+              <Activity className="mr-1 h-3.5 w-3.5" /> Activity
+            </Button>
+          )}
           {canManageTags && (
             <Button variant="outline" size="sm" onClick={onEditTags} className="flex-1">
               <TagIcon className="mr-1 h-3.5 w-3.5" /> Tags

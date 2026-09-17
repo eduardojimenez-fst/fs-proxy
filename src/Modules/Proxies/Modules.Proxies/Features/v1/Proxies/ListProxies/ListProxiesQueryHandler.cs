@@ -1,4 +1,5 @@
 using FSH.Framework.Shared.Persistence;
+using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Contracts.Dtos;
 using FSH.Modules.Proxies.Contracts.v1.Proxies;
 using FSH.Modules.Proxies.Data;
@@ -26,6 +27,23 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
 #pragma warning restore CA1862, CA1304, CA1311
         }
         if (query.Kind is { } kind) q = q.Where(p => p.Kind == kind);
+        // Host/Username are free-text "contains" searches. PostgreSQL is case-sensitive by
+        // default (SQL Server is not), so normalize both sides the same way the geolocation
+        // filter above does — see the CA1862 note there.
+        if (!string.IsNullOrWhiteSpace(query.Host))
+        {
+            var normalizedHost = query.Host.Trim().ToUpperInvariant();
+#pragma warning disable CA1862, CA1304, CA1311
+            q = q.Where(p => p.Host.ToUpper().Contains(normalizedHost));
+#pragma warning restore CA1862, CA1304, CA1311
+        }
+        if (!string.IsNullOrWhiteSpace(query.Username))
+        {
+            var normalizedUsername = query.Username.Trim().ToUpperInvariant();
+#pragma warning disable CA1862, CA1304, CA1311
+            q = q.Where(p => p.Username != null && p.Username.ToUpper().Contains(normalizedUsername));
+#pragma warning restore CA1862, CA1304, CA1311
+        }
         if (query.Tags is { Count: > 0 })
         {
             var normalized = query.Tags.Select(Tag.Normalize).ToList();
@@ -47,11 +65,32 @@ public sealed class ListProxiesQueryHandler(ProxiesDbContext dbContext) : IQuery
             .Join(dbContext.Tags.AsNoTracking(), a => a.TagId, t => t.Id, (a, t) => new { a.ProxyId, t.Name })
             .ToListAsync(cancellationToken).ConfigureAwait(false);
 
-        var items = page.Select(p => new ProxyDto(
-            p.Id, p.Host, p.Port, p.Protocol, p.Status,
-            p.ProviderAccountId, accountNames[p.ProviderAccountId].Name, accountNames[p.ProviderAccountId].ProviderType,
-            tagsByProxy.Where(t => t.ProxyId == p.Id).Select(t => t.Name).ToList(),
-            p.CreatedAtUtc, p.LastRenewedAtUtc, p.Geolocation, p.ProviderGrouping, p.Kind)).ToList();
+        // One indexed aggregate over the page's proxies (IX_ProxyUsageEvents_ProxyId_OccurredAtUtc),
+        // counted in SQL rather than pulled into memory — a busy proxy can have thousands of events
+        // a day once consumers are reporting feedback.
+        var since = DateTime.UtcNow.AddHours(-24);
+        var health = await dbContext.ProxyUsageEvents.AsNoTracking()
+            .Where(e => proxyIdsOnPage.Contains(e.ProxyId) && e.OccurredAtUtc >= since)
+            .GroupBy(e => e.ProxyId)
+            .Select(g => new
+            {
+                ProxyId = g.Key,
+                Success = g.Count(e => e.Outcome == UsageEventOutcome.Success),
+                Failure = g.Count(e => e.Outcome != UsageEventOutcome.Success),
+                LastAt = g.Max(e => e.OccurredAtUtc)
+            })
+            .ToDictionaryAsync(x => x.ProxyId, cancellationToken).ConfigureAwait(false);
+
+        var items = page.Select(p =>
+        {
+            health.TryGetValue(p.Id, out var h);
+            return new ProxyDto(
+                p.Id, p.Host, p.Port, p.Protocol, p.Status,
+                p.ProviderAccountId, accountNames[p.ProviderAccountId].Name, accountNames[p.ProviderAccountId].ProviderType,
+                tagsByProxy.Where(t => t.ProxyId == p.Id).Select(t => t.Name).ToList(),
+                p.CreatedAtUtc, p.LastRenewedAtUtc, p.Geolocation, p.ProviderGrouping, p.Kind, p.Username,
+                h?.Success ?? 0, h?.Failure ?? 0, h?.LastAt);
+        }).ToList();
 
         return new PagedResponse<ProxyDto>
         {

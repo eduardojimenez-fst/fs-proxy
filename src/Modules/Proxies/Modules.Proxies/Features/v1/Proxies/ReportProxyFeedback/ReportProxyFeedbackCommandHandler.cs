@@ -1,4 +1,5 @@
 using FSH.Framework.Core.Exceptions;
+using FSH.Modules.Proxies.Contracts;
 using FSH.Modules.Proxies.Contracts.v1.Proxies;
 using FSH.Modules.Proxies.Data;
 using FSH.Modules.Proxies.Domain;

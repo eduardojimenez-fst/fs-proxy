@@ -23,6 +23,12 @@ export type ProxyDto = {
   geolocation: string | null;
   providerGrouping: string | null;
   kind: ProxyKind | null;
+  /** Auth username. Several providers put the proxy's own egress IP here, so it doubles as an identifier. */
+  username: string | null;
+  /** Rolling 24h counts from ProxyUsageEvents. Both zero + null `lastEventAtUtc` means "no data yet". */
+  successCount24h: number;
+  failureCount24h: number;
+  lastEventAtUtc: string | null;
 };
 
 export type ListProxiesParams = {
@@ -31,6 +37,10 @@ export type ListProxiesParams = {
   providerAccountId?: string;
   geolocation?: string;
   kind?: ProxyKind;
+  /** Case-insensitive "contains" search. */
+  host?: string;
+  /** Case-insensitive "contains" search. */
+  username?: string;
   pageNumber?: number;
   pageSize?: number;
 };
@@ -43,6 +53,8 @@ export async function listProxies(params: ListProxiesParams = {}): Promise<Paged
   if (params.providerAccountId) query.set("providerAccountId", params.providerAccountId);
   if (params.geolocation) query.set("geolocation", params.geolocation);
   if (params.kind) query.set("kind", params.kind);
+  if (params.host) query.set("host", params.host);
+  if (params.username) query.set("username", params.username);
   for (const tag of params.tags ?? []) query.append("tags", tag);
   return apiFetch<PagedResponse<ProxyDto>>(`${BASE}/?${query.toString()}`);
 }

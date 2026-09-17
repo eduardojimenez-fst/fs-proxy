@@ -15,10 +15,10 @@ public static class ListProxiesEndpoint
     {
         return endpoints.MapGet("/",
                 (string[]? tags, ProxyStatus? status, Guid? providerAccountId, string? geolocation, ProxyKind? kind,
-                    int pageNumber, int pageSize, IMediator mediator, CancellationToken ct) =>
-                    mediator.Send(new ListProxiesQuery(tags, status, providerAccountId, geolocation, kind, pageNumber == 0 ? 1 : pageNumber, pageSize == 0 ? 20 : pageSize), ct))
+                    string? host, string? username, int pageNumber, int pageSize, IMediator mediator, CancellationToken ct) =>
+                    mediator.Send(new ListProxiesQuery(tags, status, providerAccountId, geolocation, kind, host, username, pageNumber == 0 ? 1 : pageNumber, pageSize == 0 ? 20 : pageSize), ct))
             .WithName("ListProxies")
-            .WithSummary("List proxies (paged, filterable by tags/status/provider account/geolocation/kind)")
+            .WithSummary("List proxies (paged, filterable by tags/status/provider account/geolocation/kind/host/username)")
             .RequirePermission(ProxiesPermissions.ProviderAccounts.View);
     }
 }

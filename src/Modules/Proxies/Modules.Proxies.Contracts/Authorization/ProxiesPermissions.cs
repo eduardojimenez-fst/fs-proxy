@@ -58,6 +58,16 @@ public static class ProxiesPermissions
     }
 
     /// <summary>
+    /// Read-only access to the proxy usage timeline (health-check probes + consumer feedback).
+    /// Separate from the proxy list because the events carry provider/consumer error details.
+    /// </summary>
+    public static class UsageEvents
+    {
+        public const string Resource = "Proxies.UsageEvents";
+        public const string View = $"Permissions.{Resource}.View";
+    }
+
+    /// <summary>
     /// Gates the consumer-facing endpoints (<c>POST /proxies/request</c> and
     /// <c>POST /proxies/{id}/feedback</c>) for callers authenticating with a JWT rather than an
     /// admin-issued API key. Deliberately NOT <c>IsBasic</c>: <c>request</c> hands back decrypted
@@ -101,6 +111,8 @@ public static class ProxiesPermissions
         new("View Api Clients", ActionConstants.View, ApiClients.Resource, IsBasic: true),
         new("Create Api Clients", ActionConstants.Create, ApiClients.Resource),
         new("Delete Api Clients", ActionConstants.Delete, ApiClients.Resource),
+
+        new("View Proxy Usage Events", ActionConstants.View, UsageEvents.Resource, IsBasic: true),
 
         new("Request Proxies", "Request", Consumers.Resource, IsBasic: false),
     ];
