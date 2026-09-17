@@ -50,9 +50,16 @@ public sealed class Proxy : AggregateRoot<Guid>, IGlobalEntity
 
     public void SetStatus(ProxyStatus status) => Status = status;
 
+    /// <remarks>
+    /// This is a full replacement of the connection fields — <paramref name="geolocation"/>,
+    /// <paramref name="providerGrouping"/> and <paramref name="kind"/> are deliberately NOT
+    /// optional: defaults let a caller blank them out by simply forgetting they exist, which
+    /// is exactly how manual-proxy edits and renewals used to silently lose provider metadata.
+    /// A caller that does not mean to change them must pass the proxy's current values.
+    /// </remarks>
     public void UpdateConnection(
         string host, int port, ProxyProtocol protocol, string? username, string? protectedPassword,
-        string? geolocation = null, string? providerGrouping = null, ProxyKind? kind = null)
+        string? geolocation, string? providerGrouping, ProxyKind? kind)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(host);
         Host = host.Trim();

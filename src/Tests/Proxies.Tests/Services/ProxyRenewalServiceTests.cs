@@ -38,7 +38,7 @@ public sealed class ProxyRenewalServiceTests
         adapter.SupportsRenew.Returns(true);
         adapter.RenewProxyAsync(Arg.Any<ProviderAccount>(), Arg.Any<string>(), Arg.Any<Proxy>(), Arg.Any<CancellationToken>())
             .Returns(ProviderRenewResult.Ok(new ProviderProxyRecord("ext-1", "new-ip", 2222, ProxyProtocol.Http, "u2", "p2", true,
-                Geolocation: "cl", ProviderGrouping: "zone1")));
+                Geolocation: "cl", ProviderGrouping: "zone1", Kind: ProxyKind.Residential)));
         var factory = Substitute.For<IProxyProviderAdapterFactory>();
         factory.GetAdapter(ProxyProviderType.WebShare).Returns(adapter);
         var outbox = Substitute.For<IOutboxWriter>();
@@ -52,10 +52,11 @@ public sealed class ProxyRenewalServiceTests
         stored.Status.ShouldBe(ProxyStatus.Testing);
         stored.LastRenewedAtUtc.ShouldNotBeNull();
         // Regression: UpdateConnection must be called with the updated record's Geolocation/
-        // ProviderGrouping, not omit them — omitting would blank out both fields on every
-        // successful renewal (see ProxyRenewalService).
+        // ProviderGrouping/Kind, not omit them — omitting would blank out those fields on
+        // every successful renewal (see ProxyRenewalService).
         stored.Geolocation.ShouldBe("cl");
         stored.ProviderGrouping.ShouldBe("zone1");
+        stored.Kind.ShouldBe(ProxyKind.Residential);
         await outbox.DidNotReceive().AddAsync(Arg.Any<ManualProxyNeedsAttentionIntegrationEvent>(), Arg.Any<CancellationToken>());
     }
 

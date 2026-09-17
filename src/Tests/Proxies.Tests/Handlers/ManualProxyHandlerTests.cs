@@ -67,6 +67,51 @@ public sealed class ManualProxyHandlerTests
     }
 
     [Fact]
+    public async Task Update_Should_PreserveProviderMetadata_NotModelledByTheCommand()
+    {
+        // Regression: UpdateManualProxyCommand carries no geolocation/grouping/kind, so the
+        // handler must pass the proxy's current values to UpdateConnection. Omitting them
+        // blanked all three on every manual edit.
+        await using var db = CreateDb();
+        var protector = new FakePasswordProtector();
+        var proxy = Proxy.Create(
+            ManualProviderAccount.Id, "10.0.0.8", 3128, ProxyProtocol.Http, "u", protector.Protect("p"), null,
+            geolocation: "cl", providerGrouping: "zone1", kind: ProxyKind.Residential);
+        db.Proxies.Add(proxy);
+        await db.SaveChangesAsync();
+        var sut = new UpdateManualProxyCommandHandler(db, protector);
+
+        await sut.Handle(
+            new UpdateManualProxyCommand(proxy.Id, "10.0.0.9", 3129, ProxyProtocol.Http, "u", null, []),
+            CancellationToken.None);
+
+        var stored = await db.Proxies.SingleAsync(x => x.Id == proxy.Id);
+        stored.Host.ShouldBe("10.0.0.9");
+        stored.Geolocation.ShouldBe("cl");
+        stored.ProviderGrouping.ShouldBe("zone1");
+        stored.Kind.ShouldBe(ProxyKind.Residential);
+    }
+
+    [Fact]
+    public async Task Update_Should_ReplaceUsername_When_Provided()
+    {
+        await using var db = CreateDb();
+        var protector = new FakePasswordProtector();
+        var proxy = Proxy.Create(
+            ManualProviderAccount.Id, "10.0.0.8", 3128, ProxyProtocol.Http, "200.1.2.3", protector.Protect("p"), null,
+            geolocation: null, providerGrouping: null, kind: null);
+        db.Proxies.Add(proxy);
+        await db.SaveChangesAsync();
+        var sut = new UpdateManualProxyCommandHandler(db, protector);
+
+        await sut.Handle(
+            new UpdateManualProxyCommand(proxy.Id, "10.0.0.8", 3128, ProxyProtocol.Http, "200.9.9.9", null, []),
+            CancellationToken.None);
+
+        (await db.Proxies.SingleAsync(x => x.Id == proxy.Id)).Username.ShouldBe("200.9.9.9");
+    }
+
+    [Fact]
     public async Task Delete_Should_RemoveProxy()
     {
         await using var db = CreateDb();
