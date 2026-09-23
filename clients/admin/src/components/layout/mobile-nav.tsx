@@ -112,7 +112,7 @@ export function MobileNavRoot() {
           </span>
           <div className="flex flex-col">
             <span className="whitespace-nowrap font-display text-[15px] font-bold leading-none tracking-tight text-[var(--color-foreground)]">
-              fullstack<span className="text-[var(--color-primary)]">hero</span>
+              fs<span className="text-[var(--color-primary)]">proxy</span>
             </span>
             <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-[oklch(from_var(--color-muted-foreground)_l_c_h_/_0.7)]">
               Admin
